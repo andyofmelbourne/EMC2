@@ -279,8 +279,20 @@ def save_model_slices(models_I, **config):
     N = config['iteration']
     with h5py.File(fnam, 'r+') as f:
         g = f[f'iteration_{N}']
-        g.create_dataset('model_slices', data = slices, chunks = slices.shape, compression = 'gzip')
-        g['model_dq'] = models_I.dq
+        k = 'model_slices'
+        
+        if k in g and g[k].shape == slices.shape :
+            g[k][:] = slices
+        elif k in g and g[k].shape != slices.shape :
+            del g[k] 
+        
+        if k not in g:
+            g.create_dataset(k, data = slices, chunks = slices.shape, compression = 'gzip')
+        
+        k = 'model_dq'
+        if k in g :
+            del g[k]
+        g[k] = models_I.dq
 
 def save_iteration_info(prob, W_ri, **config):
     fnam = os.path.join(config['working_directory'], 'iteration_info.h5')

@@ -68,12 +68,14 @@ class Data_getter():
         **kwargs
     ):
         
+        
         if cachedir is None :
             cachedir = os.path.join(working_directory, 'cachdir')
             # create cachedir if needed
-            if not os.path.exists(cachedir):
+            if not os.path.exists(cachedir) and rank == 0 :
                 os.mkdir(cachedir)
             self.cachedir = cachedir
+        comm.barrier()
         
         self.fnam    = cxi_file
         stem         = pathlib.Path(cxi_file).stem

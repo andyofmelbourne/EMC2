@@ -97,8 +97,8 @@ class Model_update():
         self.C = config['C']
         self.models = config['models']
         
-        self.r_chunk_size = 256
-        self.d_chunk_size = 256
+        self.r_chunk_size = 1024
+        self.d_chunk_size = 1024
         
         self.update_fluence = update_fluence
         self.likelihood     = likelihood
@@ -136,7 +136,8 @@ class Model_update():
                 
                 if len(r) > 0 :
                     # calculate pixel mappings
-                    n = self.M_ri[r0+r[0]: r0+1+r[-1], :]
+                    for _ in tqdm(range(1), desc = 'calculating pixel mapping (gpu)', leave = False, disable = quiet):
+                        n = self.M_ri[r0+r[0]: r0+1+r[-1], :]
                     # this is needed as there are duplicates along axis 0
                     # when symmetry mapping is enabled
                     # np.add.at allows for duplicates
@@ -152,8 +153,15 @@ class Model_update():
                         err = f'failed to parse maximise option: {self.maximise}'
                         raise ValueError(err)
                     
-                    np.add.at(I.ravel(), n, N_ri[r])
-                    np.add.at(O.ravel(), n, D_ri[r])
+                    for _ in tqdm(range(1), desc = 'np.add.at I', leave = False, disable = quiet):
+                        #np.add.at(I.ravel(), n, N_ri[r])
+                        for m in n :
+                            I += np.bincount(m.ravel(), N_ri[r].ravel(), minlength = I.size).reshape(I.shape)
+                    
+                    for _ in tqdm(range(1), desc = 'np.add.at O', leave = False, disable = quiet):
+                        #np.add.at(O.ravel(), n, D_ri[r])
+                        for m in n :
+                            O += np.bincount(m.ravel(), D_ri[r].ravel(), minlength = O.size).reshape(O.shape)
             
         # mpi reduce
         for c in range(len(self.Is)):
