@@ -87,11 +87,17 @@ def geometry(**config):
                 dq = 2 * qmax_max / (config['model_length'] - 1)
     else :
         raise ValueError('need "model_length" to define model voxel size')
+        
+    # location of zero pixel in models along each axis
+    i0 = np.float32(config['model_length']//2)
     
     out = {\
-    'mask'  : mask,
-    'C'     : np.ascontiguousarray(C[mask].astype(np.float32)),
-    'q'     : np.ascontiguousarray(q[:, mask].astype(np.float32)),
-    'dq'    : np.float32(dq),
-    'q_max' : q_max}
+    'mask'       : mask,
+    'C'          : np.ascontiguousarray(C[mask].astype(np.float32)),
+    'q'          : np.ascontiguousarray(q[:, mask].astype(np.float32)),
+    'xyz'        : np.ascontiguousarray(xyz[:, mask].astype(np.float32)),
+    'dq'         : np.float32(dq),
+    'i0'         : i0,
+    'wavelength' : wav,
+    'q_max'      : q_max}
     return out

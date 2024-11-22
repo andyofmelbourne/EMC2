@@ -63,6 +63,7 @@ class Data_getter():
         dataset      = '/entry_1/data_1/data', 
         split        = None, 
         cachedir     = None, 
+        mpi_split_frames = False, 
         working_directory = './',
         **kwargs
     ):
@@ -102,8 +103,11 @@ class Data_getter():
         comm.barrier()
         self.sparse_file = True
         
-        if not self.loaded :
+        if not self.loaded and mpi_split_frames:
             self.load_sparse_parallel()
+        
+        elif not self.loaded and not mpi_split_frames:
+            self.load_sparse()
         
         # index frames 
         self.frame_inds_indices = np.concatenate(([0], np.cumsum(self.litpix)))
@@ -188,6 +192,11 @@ class Data_getter():
                 self.frame_shape = f['frame_shape'][()]
                 self.photon_sums = f['photon_sums'][()]
         
+        self.d_start_mpi  = 0
+        self.d_stop_mpi   = len(self.litpix)
+        self.total_frames = len(self.litpix)
+        
+        self.shape       = self.litpix.shape + (self.pixels,)
         self.loaded = True
     
     def load_sparse_parallel(self):

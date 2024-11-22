@@ -21,24 +21,30 @@ polarisation     = 'x'
 # -----
 pixels_per_voxel      = 4
 model_length          = 32
-symmetry              = 'inversion'
-dimensions            = 2
-models                = 8
 interpolation_forward = 'linear'
 interpolation_inverse = 'nearest'
+symmetry              = 'inversion'
+models                = 4
+dimensions            = [3, 2, 2, 2]
 
 # tomograms
 # ---------
-rotation_order   = 8
+# (grid lenth, step size)
+#pointing_fluctuations = (4, 400e-6)
+pointing_fluctuations = False
+rotation_order        = [4, 8, 8, 0]
 
 # likelihood 
 # ----------
+#likelihood = 'Poisson'
 likelihood = 'Poisson_fluence_free'
 
 # Frame model
 # -----------
 # basic: F_dri = C_i W_ri
 frame_model = 'basic'
+# fluence: F_dri = w_d C_i W_ri
+#frame_model = 'fluence'
 
 # Maximise
 # --------
@@ -46,6 +52,7 @@ frame_model = 'basic'
 maximise = 'I'
 # skip frames with P_dr < P_thresh P_max_d 
 P_thresh = 0.01 
+update_fluence = True
 
 # Iterations
 # ----------
@@ -57,6 +64,3 @@ beta_stop     = 0.1
 gpu           = True
 max_mem       = 4 # GB's
 
-# parallelisation
-# ---------------
-nproc    = 1

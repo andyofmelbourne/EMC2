@@ -2,44 +2,107 @@ import h5py
 import numpy as np
 from pathlib import Path
 
-from .utils_cl import to_gpu, to_gpu_2D_image_stack, to_gpu_3D_image
+from .utils_cl import to_gpu, to_gpu_2D_image, to_gpu_3D_image
 from . import utils
 
 
-def get_models(iteration = 0, models = 1, dimensions = 3, model_length = 64, **config):
-    model_shape = (models,) + dimensions * (model_length,)
+def check_model_file(models_fnam, dimensions, model_length):
+    print(f'checking for existing model file {models_fnam}')
+    if not Path(models_fnam).is_file() :
+        print(f'file not found')
+        return False
     
-    # load or initialise models
-    if iteration > 0 :
-        print('*************', iteration)
-        with h5py.File('models.h5') as f:
-            if f['data'].shape == model_shape :
-                I = f['data'][()]
-    else :
-        # this is to make sure that different processors have the same model
-        np.random.seed(1)
-        I = np.random.random(model_shape)
+    with h5py.File(models_fnam, 'r') as f:
         
-        # save models 
-        utils.save_models(I, **config)
+        for c, d in enumerate(dimensions) :
+            if f'model_{c}' not in f:
+                print(f'file does not have model {c}')
+                return False
+            
+            m = f[f'model_{c}']
+            
+            if len(m.shape) != d :
+                print(f'file does not have models of correct dimesion {len(m.shape)} != {d}')
+                return False
+            
+            if m.shape[0] != model_length :
+                print(f'file does not have models of correct shape {m.shape[0]} != {model_length}')
+                return False
     
-    return np.ascontiguousarray(I.astype(np.float32))
+    return True
+                
+def load_models(Nmodels, models_fnam):
+    I = []
+    with h5py.File(models_fnam, 'r') as f:
+        w = f['relative_fluence'][()]
+        
+        for c in range(Nmodels):
+            # https://github.com/mpi4py/mpi4py/issues/177
+            I.append(f[f'model_{c}'][()].newbyteorder('='))
+    
+    return I, w
+
+def init_models(dimensions, model_length):
+    # so different mpi ranks produce the same results 
+    # and so that rerunning produces same results
+    I = []
+    np.random.seed(1)
+    print('intialising models with random numbers')
+    for d in dimensions :
+        shape = d * (model_length,)
+        
+        i = np.random.random(shape).astype(np.float32)
+        I.append(np.ascontiguousarray(i))
+        
+    return I, None
+
+def get_models(iteration, models_fnam, dimensions, model_length):
+    # load or initialise models
+    if iteration == 0 or not check_model_file(models_fnam, dimensions, model_length):
+        print('iteration is zero, initialising models')
+        I, w = init_models(dimensions, model_length)
+    else :
+        I, w = load_models(len(dimensions), models_fnam)
+    return I, w
 
 class Models():
-    def __init__(self, **config):
-        self.I  = get_models(**config)
+    """
+    read dimensions list 
+    
+    dimensions = 2 # or
+    dimensions = [2, 3, 2, 2, 3]
+    """
+    def __init__(self, no_gpu = False, **config):
+        self.models_fnam = f"{config['working_directory']}/models.h5"
+        
+        self.Nmodels = config['models']
+        
+        # side length of model dimensions
+        self.model_length = config['model_length']
+        
+        self.dimensions = utils.int_to_list(self.Nmodels, config['dimensions'], 'dimensions')
+        
+        self.I, self.w = get_models(config['iteration'], self.models_fnam, self.dimensions, self.model_length)
+        
+        # per pattern relative fluence
+        if self.w is None :
+            self.w = np.ones((config['frames'],), dtype = float)
+        
+        # I_cl is a list of 3D or 2D images
+        if not no_gpu :
+            self.I_cl = []
+            for c, d in enumerate(self.dimensions):
+                
+                if d == 3 :
+                    self.I_cl.append(to_gpu_3D_image(self.I[c], context = config['context'], queue = config['queue']))
+                
+                elif d == 2 :
+                    self.I_cl.append(to_gpu_2D_image(self.I[c], context = config['context'], queue = config['queue']))
+                
+                else :
+                    raise ValueError(f'could parse dimension {d} for class {c}')
         
         # location of q=0 pixel in model
-        self.i0 = np.float32(self.I.shape[-1]//2)
-        self.dq = config['dq']
-        
-        # if dimension = 2 then load image stack
-        if config['dimensions'] == 2 :
-            pointer, read_only_flag = self.I.__array_interface__['data']
-            self.I_cl = to_gpu_2D_image_stack(self.I, context = config['context'], queue = config['queue'])
-        
-        # if dimension = 3 then load a list of 3D images
-        elif config['dimensions'] == 3 :
-            self.I_cl = []
-            for model in range(self.I.shape[0]):
-                self.I_cl.append(to_gpu_3D_image(self.I[model], context = config['context'], queue = config['queue']))
+        self.i0    = np.float32(self.model_length//2)
+        self.dq    = config['dq']
+        self.q_max = config['q_max']

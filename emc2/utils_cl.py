@@ -71,12 +71,24 @@ def to_gpu_2D_image_stack(ar, queue = None, context = None):
     cl.enqueue_copy(queue, dest = I_cl, src = ar, 
                     origin = (0, 0, 0), region = shape[::-1])
     return I_cl
+
+def to_gpu_2D_image(ar, queue = None, context = None):
+    # copy I as an opencl "image" for bilinear sampling
+    shape        = ar.shape
+    image_format = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)
+    flags        = cl.mem_flags.READ_ONLY
+    I_cl         = cl.Image(context, flags, image_format, 
+                            shape = shape[::-1], is_array = False)
+    
+    cl.enqueue_copy(queue, dest = I_cl, src = np.ascontiguousarray(ar.T.astype(np.float32)), 
+                    origin = (0, 0), region = shape[::-1])
+    return I_cl
     
 def to_gpu_3D_image(ar, queue = None, context = None):
     # copy I as an opencl "image" for trilinear sampling
     shape        = ar.shape
     image_format = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)
     flags        = cl.mem_flags.READ_ONLY
-    I_cl         = cl.Image(context, flags, image_format, shape=I.shape[::-1])
-    cl.enqueue_copy(queue, I_cl, ar.T.copy().astype(np.float32), is_blocking=True, origin=(0, 0, 0), region=I.shape[::-1])
+    I_cl         = cl.Image(context, flags, image_format, shape=ar.shape[::-1])
+    cl.enqueue_copy(queue, I_cl, np.ascontiguousarray(ar.T.astype(np.float32)), is_blocking=True, origin=(0, 0, 0), region=ar.shape[::-1])
     return I_cl
