@@ -34,7 +34,8 @@ def check_model_file(models_fnam, dimensions, model_length):
 def load_models(Nmodels, models_fnam):
     I = []
     with h5py.File(models_fnam, 'r') as f:
-        w = f['relative_fluence'][()]
+        # https://github.com/mpi4py/mpi4py/issues/177
+        w = f['relative_fluence'][()].newbyteorder('=')
         
         for c in range(Nmodels):
             # https://github.com/mpi4py/mpi4py/issues/177
@@ -105,4 +106,4 @@ class Models():
         # location of q=0 pixel in model
         self.i0    = np.float32(self.model_length//2)
         self.dq    = config['dq']
-        self.q_max = config['q_max']
+        self.q_max = config['q_max_model']

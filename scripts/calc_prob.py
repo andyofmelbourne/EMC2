@@ -14,6 +14,7 @@ from emc2 import probability
 from emc2 import geometry
 from emc2 import tomograms
 from emc2 import model
+from emc2 import frames
 
 import argparse
 import os
@@ -63,7 +64,7 @@ def main():
     K_di = data_getter.Data_getter(**config)
     config['frames'] = K_di.shape[0]
     config['pixels'] = K_di.shape[1]
-    
+
     # for mpi
     config['d_start_mpi']   = K_di.d_start_mpi
     config['d_stop_mpi']    = K_di.d_stop_mpi
@@ -77,12 +78,26 @@ def main():
     config['rotations'] = W_ri.shape[0]
     
     # initialise probability calc
-    prob = probability.Probability(K_di, W_ri, models_I, **config)
+    if config['frame_model'] == 'background':
+        B_di  = data_getter.Data_getter_background(K_di)
+        F_dri = frames.Frames(B_di, models_I.w, W_ri, **config)
+    
+        prob = probability.Probability_background(K_di, F_dri, **config)
+    else :
+        prob = probability.Probability(K_di, W_ri, models_I, **config)
     
     # run main code
     prob.calc()
     
     # save
+    if config['iteration'] == 0 : 
+        w = comm.gather(models_I.w, root = 0)
+        
+        if rank == 0 :
+            print([i.shape for i in w])
+            models_I.w = np.concatenate(w, axis=0)
+            utils.save_models(models_I, **config)
+        
     utils.save_prob(prob, **config)
     utils.save_iteration_info(prob, W_ri, **config)
 

@@ -52,6 +52,11 @@ def geometry(**config):
     
     # scale 
     C /= C[mask].max()
+
+    M = config['model_length']
+    k = 'zero_padding' 
+    if k in config and config[k] :
+        M = M - 2 * config[k]
     
     if config['q_max'] :
         q_max = config['q_max']
@@ -66,7 +71,7 @@ def geometry(**config):
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
     
     elif config['pixels_per_voxel'] and config['model_length'] :
-        rp    = dx * config['pixels_per_voxel'] * config['model_length'] 
+        rp    = dx * config['pixels_per_voxel'] * M 
         z     = xyz[2].ravel()[0]
         r     = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
@@ -80,11 +85,23 @@ def geometry(**config):
     # such that the zero pixel (i0) satisfies:
     #   np.fft.fftshift(np.fft.fftfreq(N))[i0] = 0
     if config['model_length'] :
+        #M = config['model_length']
+        
         if config['pixels_per_voxel'] :
             if (config['model_length'] % 2) == 0 :
-                dq = q_max / (config['model_length'] / 2 - 1)
+                dq = q_max / (M / 2 - 1)
             else :
-                dq = 2 * qmax_max / (config['model_length'] - 1)
+                dq = 2 * q_max / (M - 1)
+
+        # increase qmax for model if required
+        k = 'zero_padding' 
+        if k in config and config[k] :
+            q_max_model = q_max + 2 * config[k] * dq
+        else :
+            q_max_model = q_max 
+
+        print(f'{q_max=} {q_max_model=} {config[k]=}')
+
     else :
         raise ValueError('need "model_length" to define model voxel size')
         
@@ -99,5 +116,6 @@ def geometry(**config):
     'dq'         : np.float32(dq),
     'i0'         : i0,
     'wavelength' : wav,
-    'q_max'      : q_max}
+    'q_max'      : q_max,
+    'q_max_model': q_max_model}
     return out

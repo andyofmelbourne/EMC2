@@ -326,6 +326,7 @@ def save_iteration_info(prob, W_ri, **config):
             g.create_dataset('most_likely_state_d', shape = (D,), dtype = prob.rmax.dtype)
             g.create_dataset('most_likely_model_d', shape = (D,), dtype = prob.rmax.dtype)
             g.create_dataset('most_likely_orientation_d', shape = (D,), dtype = prob.rmax.dtype)
+            g.create_dataset('occupancy_dc',        shape = (D, config['models']), dtype = prob.occ_dc.dtype)
     
     if rank == 0 :
         occupancy = np.empty((R,), dtype = prob.occ.dtype)
@@ -349,6 +350,7 @@ def save_iteration_info(prob, W_ri, **config):
                 g['Q_d'][d_start : d_stop]                 = prob.Q
                 g['most_likely_state_d'][d_start : d_stop] = prob.rmax
                 g['most_likely_model_d'][d_start : d_stop] = W_ri.class_r[prob.rmax]
+                g['occupancy_dc'][d_start : d_stop]        = prob.occ_dc
                 g['most_likely_orientation_d'][d_start : d_stop] = W_ri.orientation_r[prob.rmax]
                 
                 if rank == 0 :

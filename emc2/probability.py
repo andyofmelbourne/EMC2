@@ -32,11 +32,6 @@ class Probability():
     much faster with that kind of memory access pattern.
     """
     def __init__(self, K_di, W_ri, models_I, **config):
-        self.queue   = config['queue']
-        self.context = config['context']
-        
-        #self.compile()
-         
         self.D         = np.int32(K_di.shape[0])
         self.I         = np.int32(W_ri.shape[1])
         self.R         = np.int32(W_ri.shape[0])
@@ -44,18 +39,17 @@ class Probability():
         self.K_di      = K_di 
         self.I         = models_I
         
-        self.C     = config['C']
-        self.wsums = np.empty((self.R,), dtype = np.float32)
-        self.P     = np.zeros((self.D, self.R), dtype = np.float32)
-        self.beta  = utils.get_beta(**config)
-        self.rmax  = np.empty((self.D,), dtype = np.uint32)
-        self.occ   = np.zeros((self.R,), dtype = float)
-        self.gini  = np.zeros((self.D,), dtype = float)
-        self.Q     = np.zeros((self.D,), dtype = float)
+        self.C      = config['C']
+        self.wsums  = np.empty((self.R,), dtype = np.float32)
+        self.P      = np.zeros((self.D, self.R), dtype = np.float32)
+        self.beta   = utils.get_beta(**config)
+        self.rmax   = np.empty((self.D,), dtype = np.uint32)
+        self.occ    = np.zeros((self.R,), dtype = float)
+        self.gini   = np.zeros((self.D,), dtype = float)
+        self.Q      = np.zeros((self.D,), dtype = float)
+        self.occ_dc = np.zeros((self.D, config['models']), dtype = float)
         
         self.P_thresh = config['P_thresh']
-        
-        self.update_fluence = False
         
         self.calc_tomo_sums(d_chunk_size = 2048, r_chunk_size = 256)
         
@@ -78,7 +72,6 @@ class Probability():
         elif config['likelihood'] == 'Poisson' and \
            config['frame_model'] == 'fluence':
             self.w = self.I.w
-            self.update_fluence = True
             self.wsums2 = self.wsums
         
         else :
@@ -98,22 +91,28 @@ class Probability():
             
             self.wsums[r0:r1] = np.sum(self.C * W[:dr], axis=1)
     
-    def calc(self, d_chunk_size = 2048, r_chunk_size = 256):
+    def calc(self, d_chunk_size = 2048, r_chunk_size = 1024):
         d_chunk_size = min(d_chunk_size, self.D)
         r_chunk_size = min(r_chunk_size, self.R)
         r_iters = math.ceil(self.R/r_chunk_size)
         d_iters = math.ceil(self.D/d_chunk_size)
+        
+        # make a buffer for increased precision
+        P = np.zeros((d_chunk_size, self.R), dtype = float)
         
         # logR_dr = \sum_i K_di logW_ri - K_d log(sum_i C_i W_ri)
         # -------------------------------------------------------
         for d0, d1, dd in tqdm(chunker(d_chunk_size, self.D), desc = 'calculating probability matrix', total = d_iters, leave = True, disable = quiet):
             K_di = self.K_di[d0:d1, :]
             #
+            P[:] = 0
             for r0, r1, dr in tqdm(chunker(r_chunk_size, self.R), total = r_iters, leave = False, disable = quiet):
                 W_ri = self.W_ri.log[r0:r1, :]
                 #
-                self.P[d0:d1, r0:r1] += np.dot(K_di[:dd], W_ri[:dr].T)
-                self.P[d0:d1, r0:r1] -= self.w[d0:d1, None] * self.wsums2[None, r0:r1]
+                P[:dd, r0:r1] += np.dot(K_di[:dd], W_ri[:dr].T)
+                P[:dd, r0:r1] -= self.w[d0:d1, None] * self.wsums2[None, r0:r1]
+                    
+            self.P[d0:d1, :] = P[:dd, :]
                         
         self.normalise()
     
@@ -134,8 +133,44 @@ class Probability():
             
             P      /= np.sum(P)
              
-            self.rmax[d]  = rmax
-            self.occ     += P
-            self.gini[d] += utils.gini(P)
-            self.Q[d]    += np.sum(P * self.P[d])
-            self.P[d]     = P
+            self.rmax[d]    = rmax
+            self.occ       += P
+            self.gini[d]   += utils.gini(P)
+            self.Q[d]      += np.sum(P * self.P[d])
+            self.P[d]       = P
+            self.occ_dc[d] += np.bincount(self.W_ri.class_r, weights = P)
+
+
+class Probability_background():
+    """
+    R_dr = \sum_i K_di log F_dri - F_dr
+    """
+    def __init__(self, K_di, F_dri, **config):
+        self.K_di  = K_di
+        self.F_dri = F_dri
+    
+    def calc(self, d_chunk_size = 2048, r_chunk_size = 1024):
+        d_chunk_size = min(d_chunk_size, self.D)
+        r_chunk_size = min(r_chunk_size, self.R)
+        r_iters = math.ceil(self.R/r_chunk_size)
+        d_iters = math.ceil(self.D/d_chunk_size)
+        
+        # make a buffer for increased precision
+        P = np.zeros((d_chunk_size, self.R), dtype = float)
+
+        # logR_dr = \sum_i K_di log F_dri - F_dri
+        # -------------------------------------------------------
+        for d0, d1, dd in tqdm(chunker(d_chunk_size, self.D), desc = 'calculating probability matrix', total = d_iters, leave = True, disable = quiet):
+            K_di = self.K_di[d0:d1, :]
+            #
+            P[:] = 0
+            for r0, r1, dr in tqdm(chunker(r_chunk_size, self.R), total = r_iters, leave = False, disable = quiet):
+                F_dri = self.F_dri[d0:d1, r0:r1, :]
+                #
+                Fsum_dr        = np.sum(F_dri[:dd, :dr, :], axis = -1)
+                P[:dd, r0:r1] += np.sum(K_di[:dd, None, :] * np.log(F_dri[:dd, :dr, :]), axis=-1)
+                P[:dd, r0:r1] -= Fsum_dr
+                
+            self.P[d0:d1, :] = P[:dd, :]
+                        
+        self.normalise()

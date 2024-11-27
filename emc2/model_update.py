@@ -90,6 +90,7 @@ class Model_update():
 
         if update_fluence :
             self.w_d[:] = 0.
+            self.w_update_d = np.zeros_like(self.w_d)
         
         self.D, self.R = self.P_dr.shape
         self.I         = K_di.shape[1]
@@ -97,8 +98,8 @@ class Model_update():
         self.C = config['C']
         self.models = config['models']
         
-        self.r_chunk_size = 1024
-        self.d_chunk_size = 1024
+        self.r_chunk_size = 256
+        self.d_chunk_size = 4*1024
         
         self.update_fluence = update_fluence
         self.likelihood     = likelihood
@@ -117,15 +118,32 @@ class Model_update():
         
         PK_ri = np.empty((self.r_chunk_size, self.I), dtype = float)
         
+        # two pass algorithm
+        # first update fluence if needed then update I 
+        # this is to avoid rapid fluctuations in model scale
+        if self.update_fluence :
+            for r0, r1, dr in tqdm(r_iter, desc = 'updating fluence', total = Nr, disable = quiet):
+                b_d = self.fluence_update(
+                    np.ascontiguousarray(self.P_dr[:, r0:r1]), 
+                    self.Wsums_r[r0:r1], 
+                )
+                self.w_update_d += b_d
+            
+            w = np.empty_like(self.w_update_d)
+            
+            comm.Allreduce(self.w_update_d, w, op = MPI.SUM) 
+            comm.barrier()
+            
+            self.w_d[:] = self.K_di.photon_sums / w
+            
+            comm.barrier()
+        
         for r0, r1, dr in tqdm(r_iter, desc = 'merging over I', total = Nr, disable = quiet):
-            N_ri, D_ri, b_d = self.calc_N_D_rchunk(
+            N_ri, D_ri = self.calc_N_D_rchunk(
                 np.ascontiguousarray(self.P_dr[:, r0:r1]), 
                 self.Wsums_r[r0:r1], 
                 PK_ri[:dr]
             )
-            
-            if self.update_fluence :
-                self.w_d += b_d
             
             for c in range(len(self.Is)):
                 I = self.Is[c]
@@ -141,7 +159,7 @@ class Model_update():
                     # this is needed as there are duplicates along axis 0
                     # when symmetry mapping is enabled
                     # np.add.at allows for duplicates
-                 
+                     
                     if self.maximise == 'I':
                         pass
                         
@@ -175,14 +193,22 @@ class Model_update():
             
             comm.Reduce(self.Is[c], I, op = MPI.SUM, root = 0) 
             comm.Reduce(self.Os[c], O, op = MPI.SUM, root = 0) 
+
             comm.barrier()
             
             if rank == 0 :
                 O[O==0] = 1
                 I /= O
                 self.Is[c] = I.copy()
+
         return self.Is
-    
+
+    def fluence_update(self, P_dr, Wsums_r):
+        # a_d   = sum_i K_di
+        # b_d   = sum_r P_dr Wsum_r
+        # w'_d  = a_d / b_d
+        b_d  = np.dot(P_dr, Wsums_r)
+        return b_d
     
     def calc_N_D_rchunk(self, P_dr, Wsums_r, PK_ri):
         # split d over local chunks
@@ -212,22 +238,14 @@ class Model_update():
             D_ri = np.outer(np.dot(self.K_di.photon_sums, P_dr), self.C)
         
         # N_ri  = sum_d P_dr K_di
-        # D_r   = C_i sum_d w_d P_dr
+        # D_ri  = C_i sum_d w_d P_dr
         elif self.likelihood == 'Poisson' and self.frame_model == 'fluence':
             N_ri = PK_ri
             D_ri = np.outer(np.dot(self.w_d, P_dr), self.C)
-
+        
         else :
             err = f'could not parse likelihood "{self.likelihood}" and frame_model "{self.frame_model}" combination'
             raise ValueError(err)
-            
-        # a_d   = sum_i K_di
-        # b_d   = sum_r P_dr Wsum_r
-        # w'_d  = a_d / b_d
-        if self.update_fluence :
-            b_d  = np.dot(P_dr, Wsums_r)
-        else :
-            b_d = None
         
-        return N_ri, D_ri, b_d
+        return N_ri, D_ri#, b_d
         

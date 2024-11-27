@@ -16,9 +16,9 @@ def get_args():
     parser = argparse.ArgumentParser(
     formatter_class=argparse.RawDescriptionHelpFormatter, 
     description="""
-    Update models
+    Show iteration information
     """)
-    parser.add_argument('config', type=str, help='configuration file name')
+    parser.add_argument('fnam', type=str, help='iteration_info file name')
     args = parser.parse_args()
     return args
 
@@ -33,19 +33,19 @@ keys_mapping = defaultdict(lambda: "unknown", qt_keys)
 
 # load config
 args = get_args()
-config = utils.load_config(args.config)
-config['working_directory'] = os.path.abspath(os.path.dirname(config['__file__']))
-iteration = utils.get_iterations(**config)
-fnam      = os.path.join(config['working_directory'], 'iteration_info.h5')
+fnam      = args.fnam
+
+#with h5py.File(fnam, 'r') as f:
+#    iteration = f['iterations'][()]
+iteration = 1
 
 def get_slices(fnam, iteration):
     with h5py.File(fnam, 'r') as f:
-        k = f'iteration_{iteration}'
+        k = f'iteration_{iteration}/model_slices'
         if k not in f :
             return None
         
-        g = f[k]
-        Is = g['model_slices'][()]
+        Is = f[k][()]
         
         return utils.make_models_2D_image(Is)
             
@@ -58,23 +58,30 @@ def get_plots(fnam, iteration):
         k = f'iteration_{iteration}'
         if k not in f :
             return None, None, None, None
+
+        plots.append(f['Q'][()])
+        titles.append('P logR')
+
+        plots.append(f['beta'][()])
+        titles.append('beta scaling')
+
+        plots.append(f['P_gini'][()])
+        titles.append('gini coefficient of P')
         
         g = f[k]
-        for key in g.keys():
-            if len(g[key].shape) == 1 :
-                plots.append(g[key][...])
-                titles.append(key)
-                
-                if key == 'occupancy_r':
-                    R = len(plots[-1])
-                elif key == 'Q_d':
-                    D = len(plots[-1])
-        
-        for key in f.keys():
-            if 'iteration' not in key and len(f[key].shape) == 1 :
-                plots.append(f[key][...])
-                titles.append(key)
-    
+        plots.append(np.sort(g['P_gini_d'][()])[::-1])
+        titles.append('P gini coefficient per frame')
+
+        plots.append(np.sort(g['Q_d'][()])[::-1])
+        titles.append('P logR per frame')
+
+        #plots.append(np.sort(np.bincount(g['most_likely_model_d'][()])[::-1]))
+        plots.append(np.bincount(g['most_likely_model_d'][()]))
+        titles.append('model occupancy')
+
+        R = g['occupancy_r'].shape[0]
+        D = g['Q_d'].shape[0]
+
     return plots, titles, R, D
 
 class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
@@ -90,7 +97,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                 index = len(pg_plots)
                 print(index, titles[index])
                 pg_plots.append(self.addPlot(title=titles[index]))
-                pg_plots[-1].plot(np.sort(plots[index])[::-1])
+                pg_plots[-1].plot(plots[index])
                 if plots[index].shape[0] == R :
                     pg_plots[-1].setLabel('bottom', 'orientation')
                 elif plots[index].shape[0] == D :
@@ -110,7 +117,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     def keyPressEvent(self, event):
         super(GraphicsLayoutWidget, self).keyPressEvent(event)
         key = keys_mapping[event.key()]
-        print("key press", key)
+        #print("key press", key)
         
         if key == 'Right' :
             self.update_plots(self.iteration + 1)
@@ -128,7 +135,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.iteration = iteration
         
         for plot, pg_plot in zip(plots, self.pg_plots) :
-            pg_plot.plot(np.sort(plot)[::-1], clear = True)
+            pg_plot.plot(plot, clear = True)
 
         self.setWindowTitle(f'EMC summary: iteration {iteration}')
 
@@ -140,7 +147,7 @@ class ImageView(pg.ImageView):
     def keyPressEvent(self, event):
         super(ImageView, self).keyPressEvent(event)
         key = keys_mapping[event.key()]
-        print("key press", key)
+        #print("key press", key)
         
         if key == 'Right' :
             self.update_plots(self.iteration + 1)

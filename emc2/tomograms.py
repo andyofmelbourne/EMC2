@@ -331,7 +331,8 @@ class Tomograms():
                     xyz2 = xyz.copy()
                     xyz2[0] += step * n
                     xyz2[1] += step * m
-                    q = utils.get_q(xyz2, config['wavelength'])
+                    q = utils.calc_q(config['wavelength'], xyz2)
+                    print(n, m, step * n, step * m, np.max(np.sum(q**2, axis=0)**0.5), config['q_max'], config['q_max_model'])
                     
                     self.xy_offset.append( [n * step, m * step] ) 
                     self.qxy.append((
@@ -527,80 +528,6 @@ class Tomograms():
                         self.qxy[q][0].data, 
                         self.qxy[q][1].data, 
                         self.qxy[q][2].data, 
-                        self.i0, 
-                        self.dq,
-                        orientation_offset,
-                        np.int32(i0),
-                        W_offset)
-        return self.W_cl
-
-class Mapping(Tomograms):
-
-    def __init__(self, **kwargs):
-        super().__init__(None, **kwargs)
-            
-        # change from tomograms
-        # to flattened model indices
-        self.dtype = np.int32
-        
-        self.M = np.int32(kwargs['model_length'])
-        # only applies for 3D models but better than
-        # nothing for now
-        assert(self.M**3 < np.iinfo(np.int32).max)
-    
-    # replace calculate tomograms
-    def calculate_tomograms(self, r0, r1, i0, i1):
-        """
-        we should evaluate in chunks or r
-        such that the q-values and classes do not change
-        """
-        # these are the indices of r where class or q has a new value
-        #self.changes = 1 + np.where(np.diff(self.q_indices) + np.diff(self.class_indices))[0]
-        print(r0, r1)
-        
-        rs = utils.get_chunks(r0, r1, self.changes)
-        W_offset = 0
-        for r00, r11 in rs :
-            c  = self.class_r[r00]
-            q  = self.q_r[r00]
-            d  = self.dimensions[c]
-            ro = self.rotation_orders[c]
-            dr = r00-r0 
-            W_offset           = np.int32(dr * (i1-i0))
-            orientation_offset = np.int32(self.orientation_r[r00])
-            
-            if d == 2 and ro == 0 :
-                self.cl_code.mapping_nearest_static_v0(self.queue, (i1-i0,), None,
-                        self.W_cl.data,
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.M,
-                        self.i0, 
-                        self.dq,
-                        np.int32(i0),
-                        W_offset)
-            
-            elif d == 2 and ro > 0 :
-                self.cl_code.mapping_nearest_2D_v0(self.queue, (r11-r00, i1-i0), None,
-                        self.W_cl.data,
-                        self.rotation_matrices[(d, ro)].data,
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.M,
-                        self.i0, 
-                        self.dq,
-                        orientation_offset,
-                        np.int32(i0),
-                        W_offset)
-             
-            elif d == 3 and ro > 0 :
-                self.cl_code.mapping_nearest_3D_v0(self.queue, (r11-r00, i1-i0), None,
-                        self.W_cl.data,
-                        self.rotation_matrices[(d, ro)].data,
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.qxy[q][2].data, 
-                        self.M,
                         self.i0, 
                         self.dq,
                         orientation_offset,
