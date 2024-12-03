@@ -48,7 +48,53 @@ def split_frame(frame, photons, target):
         return frames, np.sum(frames, axis=1)
 
 
+def transpose_data(
+    K_di, 
+    dataset      = '/entry_1/data_1/data',
+    fnam         = 'dataT.h5',
+    working_directory = None,
+    cachedir     = None, 
+    dtype        = None,
+    max_mem_mb   = 4000):
+    """
+    transpose dataset and write to cxi file
+    for the purposes of spawning another Data_getter
+    K_id
+    """
+    if cachedir is None :
+        cachedir = os.path.join(working_directory, 'cachdir')
+        # create cachedir if needed
+        if not os.path.exists(cachedir) :
+            os.mkdir(cachedir)
+        cachedir = cachedir
+    
+    fnam_out = os.path.join(cachedir, fnam)
+    print(f'saving transpose of data to {fnam_out}/{dataset}')
+    
+    D, I = K_di.shape
+    
+    # determine chunk size
+    mb = (D*I) * np.dtype(K_di.dtype).itemsize / 1024**2
+    chunksize = int(I * mb / max_mem_mb)
 
+    if dtype is None :
+        dtype = K_di.dtype
+    
+    with h5py.File(fnam_out, 'w') as f:
+        data = f.create_dataset(
+            dataset, 
+            shape = (I, D), 
+            dtype = dtype, 
+            chunks = (1, D), 
+            compression = 'gzip', 
+            compression_opts = 1, 
+            shuffle = True
+        )
+        
+        # loop over pixel chunks
+        for i0, i1, di in tqdm(utils.chunker(chunksize, K_di.shape[1]), desc='tranposing data set'):
+            data[i0:i1] = K_di[:, i0:i1].T
+    
 
 class Data_getter():
     """Save selected frames and pixels in sparse format
@@ -61,31 +107,32 @@ class Data_getter():
         cxi_file     = None, 
         filter       = None, 
         dataset      = '/entry_1/data_1/data', 
-        background_dataset       = '/entry_1/instrument_1/detector_1/background', 
-        background_inds_dataset  = '/entry_1/background_index', 
+        background_dataset          = '/entry_1/instrument_1/detector_1/background', 
+        background_inds_dataset     = '/entry_1/background_index', 
         background_weights_dataset  = '/entry_1/background_weighting', 
-        split        = None, 
         cachedir     = None, 
         frame_model  = None, 
+        sparse_fnam  = None, 
+        fnam_append  = '-sparse.h5',
         mpi_split_frames = False, 
         working_directory = './',
         **kwargs
     ):
+        self.fnam = cxi_file
         
+        if sparse_fnam is None :
+            if cachedir is None :
+                cachedir = os.path.join(working_directory, 'cachdir')
+                # create cachedir if needed
+                if not os.path.exists(cachedir) and rank == 0 :
+                    os.mkdir(cachedir)
+                self.cachedir = cachedir
+            comm.barrier()
+            
+            stem         = pathlib.Path(cxi_file).stem
+            self.dataset = dataset
+            self.sparse_fnam = f'{cachedir}/{stem}{fnam_append}'
         
-        if cachedir is None :
-            cachedir = os.path.join(working_directory, 'cachdir')
-            # create cachedir if needed
-            if not os.path.exists(cachedir) and rank == 0 :
-                os.mkdir(cachedir)
-            self.cachedir = cachedir
-        comm.barrier()
-        
-        self.fnam    = cxi_file
-        stem         = pathlib.Path(cxi_file).stem
-        self.dataset = dataset
-        self.cache   = {}
-        self.sparse_fnam = f'{cachedir}/{stem}-sparse.h5'
         self.filter = filter
         self.mask   = mask
         # convert None to False for h5
@@ -102,7 +149,7 @@ class Data_getter():
         if self.frame_model == 'background' and self.split_frames :
             err = "frame_model = 'background' is incompatible with split_frames = True"
             raise ValueError(err)
-
+        
         # background
         self.background_dataset          = background_dataset         
         self.background_inds_dataset     = background_inds_dataset    
@@ -140,8 +187,12 @@ class Data_getter():
         split_count = 0
         
         with h5py.File(self.fnam, 'r') as f:
-            frames = np.where(self.filter(f))[0]
-            for d in tqdm(frames, desc = 'extracting data into sparse format'):
+            if self.filter :
+                frames = np.where(self.filter(f))[0]
+            else :
+                frames = np.arange(f[self.dataset].shape[0])
+            
+            for d in tqdm(frames, desc = f'extracting data into sparse format {self.fnam}'):
                 frame   = f[self.dataset][d][self.mask].ravel() 
                 p       = np.sum(frame)
                 i = 0
@@ -213,14 +264,19 @@ class Data_getter():
         # are consistent with 
         # those in the sparse file
         with h5py.File(self.fnam, 'r') as f:
-            frames = np.where(self.filter(f))[0]
+            if self.filter :
+                frames = np.where(self.filter(f))[0]
+            else :
+                frames = np.arange(f[self.dataset].shape[0])
 
         with h5py.File(self.sparse_fnam, 'r') as f:
-            if not np.allclose(self.mask, f['mask'][()]):
+            if self.mask.shape != f['mask'].shape or not np.allclose(self.mask, f['mask'][()]):
                 return False
-            if not np.allclose(frames, f['frames'][()]):
+            if frames.shape != f['frames'].shape or not np.allclose(frames, f['frames'][()]):
                 return False
             if f['split_frames'][()] != self.split_frames :
+                return False
+            if self.frame_model == 'background' and 'background' not in f:
                 return False
         return True
     
@@ -244,6 +300,7 @@ class Data_getter():
         self.d_start_mpi  = 0
         self.d_stop_mpi   = len(self.litpix)
         self.total_frames = len(self.litpix)
+        self.dtype        = self.photons.dtype
         
         self.shape       = self.litpix.shape + (self.pixels,)
         self.loaded = True
@@ -279,13 +336,14 @@ class Data_getter():
                 self.shape       = self.litpix.shape + (self.pixels,)
 
                 if self.frame_model == 'background':
-                    self.background           = f['background'][d_start[rank]: d_stop[rank]]
+                    self.background           = f['background'][:]
                     self.background_inds      = f['background_inds'][d_start[rank]: d_stop[rank]]
                     self.background_weighting = f['background_weighting'][d_start[rank]: d_stop[rank]]
         
         self.total_frames = total_frames
         self.d_start_mpi = d_start
         self.d_stop_mpi  = d_stop
+        self.dtype = self.photons.dtype
         self.loaded = True
 
     def parse_key(self, key):
@@ -316,11 +374,13 @@ class Data_getter():
 class Data_getter_background():
     def __init__(self, data_getter):
         self.data_getter = data_getter
+        self.shape = data_getter.shape
+        self.dtype = data_getter.background.dtype
     
     def __getitem__(self, key):
         frames, pixels = self.data_getter.parse_key(key)
          
-        out   = np.zeros((len(frames), len(pixels)), dtype = self.data_getter.background.dtype)
+        out   = np.zeros((len(frames), len(pixels)), dtype = self.dtype)
         for i, d in enumerate(frames) :
             bind   = self.data_getter.background_inds[d]
             b      = self.data_getter.background_weighting[d]

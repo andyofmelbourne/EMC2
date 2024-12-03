@@ -274,7 +274,7 @@ class Mapping(Tomograms):
         if self.n_cl is None or \
                 self.n_cl.shape[0] < shape[0] or \
                 self.n_cl.shape[1] != shape[1]:
-            print('allocating gpu array:', shape, shape[0]*shape[1]*4/1024**2, 'mb')
+            #print('allocating gpu array:', shape, shape[0]*shape[1]*4/1024**2, 'mb')
             self.n_cl = cl.array.empty(self.queue, shape, dtype = self.dtype)
             self.n    = np.empty(shape, dtype = self.dtype)
     

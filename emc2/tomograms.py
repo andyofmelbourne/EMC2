@@ -291,7 +291,7 @@ class Tomograms():
     }
     for each unique combination of (dimension, rotation_order)
     """
-    def __init__(self, models_I, **config):
+    def __init__(self, models_I, cpu = False, **config):
         queue = config['queue']
         
         # rotation matrices
@@ -317,7 +317,14 @@ class Tomograms():
         self.i0     = config['i0']
         self.models = models_I
         
+        ##########
+        self.rotations = 1 # hack
+        self.update_mask(np.ones(config['pixels'], dtype = bool), **config)
+        """
         self.pixels = config['pixels']
+        self.pixel_indices = np.arange(self.pixels)
+        # W_ri.shape = (R, I)
+        self.shape = (self.rotations, self.pixels)
         
         # per pixel q values
         # ------------------
@@ -347,6 +354,8 @@ class Tomograms():
                 to_gpu(config['q'][1], queue = queue),
                 to_gpu(config['q'][2], queue = queue),
             ))
+        """
+        ##########
 
         # ------------------------------------------------------
         # r is scalar integer that indexes: q, class, orientation
@@ -391,11 +400,10 @@ class Tomograms():
         self.change_state = np.diff(self.q_r) + np.diff(self.class_r)
         self.changes = 1 + np.where(self.change_state)[0]
         
-        self.pixel_indices = np.arange(self.pixels)
         self.r_indices     = np.arange(self.rotations)
         
-        # W_ri.shape = (R, I)
         self.shape = (self.rotations, self.pixels)
+        
         self.dtype = np.float32
         
         self.W_cl = None
@@ -411,6 +419,7 @@ class Tomograms():
             raise ValueError(f'forward interpolation strategy {interpolation_forward} not supported')
 
         self.log = Tomograms_log(self)
+        self.cpu = cpu
         
         self.compile()
     
@@ -419,6 +428,43 @@ class Tomograms():
             self.cl_code = self.cl_code_log
         else :
             self.cl_code = self.cl_code_normal
+
+    def update_mask(self, new_mask, **config):
+        queue = config['queue']
+        
+        pixels = np.sum(new_mask)
+        self.pixels = pixels
+        self.pixel_indices = np.arange(self.pixels)
+        self.shape = (self.rotations, self.pixels)
+        
+        # per pixel q values
+        # ------------------
+        self.qxy       = []
+        self.xy_offset = []
+        xyz = config['xyz']
+        if config['pointing_fluctuations'] :
+            N, step = config['pointing_fluctuations'] 
+            for n in (np.arange(N) - (N//2)):
+                for m in (np.arange(N) - (N//2)):
+                    xyz2 = xyz.copy()
+                    xyz2[0] += step * n
+                    xyz2[1] += step * m
+                    q = utils.calc_q(config['wavelength'], xyz2)
+                    
+                    self.xy_offset.append( [n * step, m * step] ) 
+                    self.qxy.append((
+                        to_gpu(q[0][new_mask], queue = queue),
+                        to_gpu(q[1][new_mask], queue = queue),
+                        to_gpu(q[2][new_mask], queue = queue),
+                    ))
+        else :
+            self.xy_offset.append( [0, 0] ) 
+            self.qxy.append((
+                to_gpu(config['q'][0][new_mask], queue = queue),
+                to_gpu(config['q'][1][new_mask], queue = queue),
+                to_gpu(config['q'][2][new_mask], queue = queue),
+            ))
+        
     
     def compile(self):
         # compile code twice
@@ -456,12 +502,13 @@ class Tomograms():
     def make_buffer(self, shape):
         # we need a new cl buffer if the pixels change
         # or the number of r's increases
-        if self.W_cl is None or \
-                self.W_cl.shape[0] < shape[0] or \
-                self.W_cl.shape[1] != shape[1]:
+        if self.W_cl is None or self.W_cl.shape[0] < shape[0] or self.W_cl.shape[1] != shape[1]:
+            
             self.W_cl = cl.array.empty(self.queue, shape, dtype = self.dtype)
-            self.W = np.empty(shape, dtype = self.dtype)
-    
+            
+            if self.cpu :
+                self.W = np.empty(shape, dtype = self.dtype)
+
     def __getitem__(self, key):
         """
         put pixels in the first dimension for efficient summing
@@ -474,8 +521,12 @@ class Tomograms():
         self.make_buffer(shape)
         
         self.W_cl = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
-        cl.enqueue_copy(self.queue, self.W[:(r_stop-r_start)], self.W_cl.data)
-        return self.W[:(r_stop-r_start)]
+        
+        if self.cpu :
+            cl.enqueue_copy(self.queue, self.W[:(r_stop-r_start)], self.W_cl.data)
+            return self.W[:(r_stop-r_start)]
+        else :
+            return self.W_cl
             
     def calculate_tomograms(self, r0, r1, i0, i1):
         """
@@ -534,4 +585,3 @@ class Tomograms():
                         np.int32(i0),
                         W_offset)
         return self.W_cl
-

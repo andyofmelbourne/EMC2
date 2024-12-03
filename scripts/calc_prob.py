@@ -73,21 +73,26 @@ def main():
     # initialise models
     models_I = model.Models(**config)
     
-    # initialise tomograms
-    W_ri = tomograms.Tomograms(models_I, **config)
-    config['rotations'] = W_ri.shape[0]
-    
     # initialise probability calc
     if config['frame_model'] == 'background':
+        # initialise tomograms
+        W_ri = tomograms.Tomograms(models_I, cpu = False, **config)
+        config['rotations'] = W_ri.shape[0]
+         
         B_di  = data_getter.Data_getter_background(K_di)
         F_dri = frames.Frames(B_di, models_I.w, W_ri, **config)
     
         prob = probability.Probability_background(K_di, F_dri, **config)
     else :
+        # initialise tomograms
+        W_ri = tomograms.Tomograms(models_I, cpu = True, **config)
+        config['rotations'] = W_ri.shape[0]
+         
         prob = probability.Probability(K_di, W_ri, models_I, **config)
     
     # run main code
     prob.calc()
+    prob.normalise()
     
     # save
     if config['iteration'] == 0 : 

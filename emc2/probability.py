@@ -8,6 +8,7 @@ import sys
 from . import utils
 from . import utils_cl
 from .utils import chunker, chunker_mpi
+from .tomograms import Tomograms
 
 
 from mpi4py import MPI
@@ -38,6 +39,9 @@ class Probability():
         self.W_ri      = W_ri 
         self.K_di      = K_di 
         self.I         = models_I
+
+        # mapping from r --> class index
+        self.class_r = W_ri.class_r
         
         self.C      = config['C']
         self.wsums  = np.empty((self.R,), dtype = np.float32)
@@ -114,8 +118,6 @@ class Probability():
                     
             self.P[d0:d1, :] = P[:dd, :]
                         
-        self.normalise()
-    
     def normalise(self):
         P = np.zeros((self.R,), dtype = float)
         for d in tqdm(range(self.D), desc = 'normalising probabilities', disable = quiet):
@@ -138,7 +140,7 @@ class Probability():
             self.gini[d]   += utils.gini(P)
             self.Q[d]      += np.sum(P * self.P[d])
             self.P[d]       = P
-            self.occ_dc[d] += np.bincount(self.W_ri.class_r, weights = P)
+            self.occ_dc[d] += np.bincount(self.class_r, weights = P)
 
 
 class Probability_background():
@@ -148,8 +150,36 @@ class Probability_background():
     def __init__(self, K_di, F_dri, **config):
         self.K_di  = K_di
         self.F_dri = F_dri
-    
-    def calc(self, d_chunk_size = 2048, r_chunk_size = 1024):
+        
+        self.D         = np.int32(F_dri.shape[0])
+        self.R         = np.int32(F_dri.shape[1])
+        self.I         = np.int32(F_dri.shape[2])
+        self.K_di      = K_di 
+        
+        # for tomogram sums
+        self.C     = config['C']
+        self.W_ri  = F_dri.W_ri
+        self.wsums = np.empty((self.R,), dtype = np.float32)
+        
+        # mapping from r --> class index
+        # should probably put this in config
+        self.class_r = F_dri.W_ri.class_r
+        
+        self.P      = np.zeros((self.D, self.R), dtype = np.float32)
+        self.beta   = utils.get_beta(**config)
+        self.rmax   = np.empty((self.D,), dtype = np.uint32)
+        self.occ    = np.zeros((self.R,), dtype = float)
+        self.gini   = np.zeros((self.D,), dtype = float)
+        self.Q      = np.zeros((self.D,), dtype = float)
+        self.occ_dc = np.zeros((self.D, config['models']), dtype = float)
+        
+        self.P_thresh = config['P_thresh']
+        
+    def calc(self, d_chunk_size = 128, r_chunk_size = 32):
+        self.W_ri.cpu = True
+        Probability.calc_tomo_sums(self)
+        self.W_ri.cpu = False
+        
         d_chunk_size = min(d_chunk_size, self.D)
         r_chunk_size = min(r_chunk_size, self.R)
         r_iters = math.ceil(self.R/r_chunk_size)
@@ -157,7 +187,7 @@ class Probability_background():
         
         # make a buffer for increased precision
         P = np.zeros((d_chunk_size, self.R), dtype = float)
-
+        
         # logR_dr = \sum_i K_di log F_dri - F_dri
         # -------------------------------------------------------
         for d0, d1, dd in tqdm(chunker(d_chunk_size, self.D), desc = 'calculating probability matrix', total = d_iters, leave = True, disable = quiet):
@@ -165,12 +195,10 @@ class Probability_background():
             #
             P[:] = 0
             for r0, r1, dr in tqdm(chunker(r_chunk_size, self.R), total = r_iters, leave = False, disable = quiet):
-                F_dri = self.F_dri[d0:d1, r0:r1, :]
-                #
-                Fsum_dr        = np.sum(F_dri[:dd, :dr, :], axis = -1)
-                P[:dd, r0:r1] += np.sum(K_di[:dd, None, :] * np.log(F_dri[:dd, :dr, :]), axis=-1)
-                P[:dd, r0:r1] -= Fsum_dr
+                key = (slice(d0, d1, None), slice(r0, r1, None), slice(None))
+                P[:dd, r0:r1] += np.sum(self.F_dri.KlogF_F(key, K_di), axis=-1)
                 
             self.P[d0:d1, :] = P[:dd, :]
-                        
-        self.normalise()
+
+    def normalise(self):
+        Probability.normalise(self)

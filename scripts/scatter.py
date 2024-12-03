@@ -7,7 +7,7 @@ import signal
 from pathlib import Path
 import pyqtgraph.exporters
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery3/iteration_info.h5'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery2/iteration_info.h5'
 cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
 labels_key = '/manual_selection'
 iteration = 1

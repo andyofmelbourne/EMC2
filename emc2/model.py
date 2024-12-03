@@ -75,6 +75,8 @@ class Models():
     """
     def __init__(self, no_gpu = False, **config):
         self.models_fnam = f"{config['working_directory']}/models.h5"
+        self.context = config['context']
+        self.queue   = config['queue']
         
         self.Nmodels = config['models']
         
@@ -91,19 +93,21 @@ class Models():
         
         # I_cl is a list of 3D or 2D images
         if not no_gpu :
-            self.I_cl = []
-            for c, d in enumerate(self.dimensions):
-                
-                if d == 3 :
-                    self.I_cl.append(to_gpu_3D_image(self.I[c], context = config['context'], queue = config['queue']))
-                
-                elif d == 2 :
-                    self.I_cl.append(to_gpu_2D_image(self.I[c], context = config['context'], queue = config['queue']))
-                
-                else :
-                    raise ValueError(f'could parse dimension {d} for class {c}')
+            self.load_models_cl()
         
         # location of q=0 pixel in model
         self.i0    = np.float32(self.model_length//2)
         self.dq    = config['dq']
         self.q_max = config['q_max_model']
+
+    def load_models_cl(self): 
+        self.I_cl = []
+        for c, d in enumerate(self.dimensions):
+            if d == 3 :
+                self.I_cl.append(to_gpu_3D_image(self.I[c], context = self.context, queue = self.queue))
+            
+            elif d == 2 :
+                self.I_cl.append(to_gpu_2D_image(self.I[c], context = self.context, queue = self.queue))
+            
+            else :
+                raise ValueError(f'could parse dimension {d} for class {c}')

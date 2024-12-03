@@ -15,7 +15,9 @@ from emc2 import geometry
 from emc2 import tomograms
 from emc2 import model
 from emc2 import model_update
+from emc2 import model_update_background
 from emc2 import mapping
+from emc2 import frames
 
 import argparse
 import os
@@ -69,29 +71,58 @@ def main():
     
     # initialise tomograms
     M_ri = mapping.Mapping(**config)
-    #M_ri = tomograms.Mapping(**config)
     config['rotations'] = M_ri.shape[0]
     
-    # initialise models
-    # skip gpu (waste of memory)
-    models_I = model.Models(no_gpu = True, **config)
-    
-    # initialise update_I calc
     # perhaps we should save P_rd and only load rows of P for each rank...
     P_dr, Wsums_r = get_P(config['working_directory'])
-    mu = model_update.Model_update(K_di, M_ri, P_dr, Wsums_r, models_I, **config)
-    
-    # run main code
-    mu.calc()
+        
+    if config['frame_model'] == 'background':
+        B_di     = data_getter.Data_getter_background(K_di)
+        models_I = model.Models(no_gpu = False, **config)
+        W_ri     = tomograms.Tomograms(models_I, cpu = True, **config)
+        
+        w_d = model_update_background.w_update(P_dr, K_di, B_di, W_ri, Wsums_r, **config)
+        models_I.w = w_d
+        
+        # load transposed data
+        K_id, B_id = utils.get_transpose(K_di, B_di, working_directory = config['working_directory'])
+         
+        # maybe we don't need this 
+        del K_di
+        del B_di
+
+        # initialise update_I calc
+        I = model_update_background.model_update(K_id, B_id, models_I.w, P_dr, M_ri, models_I, **config)
+        models_I.I = I
+        
+    else :
+        # initialise models
+        models_I = model.Models(no_gpu = True, **config)
+        
+        # initialise update_I calc
+        mu = model_update.Model_update(K_di, M_ri, P_dr, Wsums_r, models_I, **config)
+        
+        # run main code
+        mu.calc()
     
     if rank == 0 :
         utils.save_models(models_I, **config)
         utils.save_model_slices(models_I, **config)
-    return models_I.I
+    
+    return models_I
 
 if __name__ == '__main__':
-    Is = main()
+    m = main()
+    #w_d = main()
     
+    #if rank == 0 :
+    #    I   = m.I
+    #    w_d = m.w
+    #    import pyqtgraph as pg
+    #    pg.plot(w_d)
+    #    for c in range(len(I)):
+    #        pg.show(I[c])
+    #    pg.exec()
     """
     if rank == 0 :
         import pickle
