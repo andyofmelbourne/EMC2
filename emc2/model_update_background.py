@@ -80,37 +80,36 @@ def w_update(P_dr, K_di, B_di, W_ri, Wsums_r, **config):
     assert(np.any(w_d>0))
     return w_d
         
-def model_update(K_id, B_id, w_d, P_dr, M_ri, models_I, **config):
-    # mpi over n
-    c0, c1, dc = utils.chunker_mpi(size, len(models_I.I))
-    c0, c1, dc = c0[rank], c1[rank], dc[rank]
-
+def model_update(K_id, B_id, w_d, P_dr, M_ri, models_I, background_classes = [], **config):
     P_rd = np.ascontiguousarray(P_dr.T)
-
+    
     # loop over n-chunks to reduce the number of M_ri calls
-    nchunks = 64
-    M     = 10*1024**2
+    nchunks = 256
+    M     = 1*1024**2
     PK    = np.zeros((nchunks, M,), dtype = float)
     BwC   = np.zeros((nchunks, M,), dtype = float)
     PwC   = np.zeros(nchunks, dtype = float)
     index = np.zeros(nchunks, dtype = int)
-
+    
     wP_r = np.dot(P_rd, w_d)
     assert(not np.any(np.isnan(wP_r)))
-
+    
     skipped_rs     = 0
     skipped_frames = 0
     skipped_no_photons = 0
-
+    
     Is = []
     my_classes = []
-    for c in range(c0, c1):
+    for c in range(len(models_I.I)):
         N  = models_I.I[c].size
         Ic = np.zeros(N, dtype = float)
         Is.append(Ic.copy())
         my_classes.append(c)
     
-    for c in tqdm(range(c0, c1), desc = 'updating models', disable = quiet):
+    for c in tqdm(range(len(models_I.I)), desc = 'updating models', disable = quiet):
+        if c in background_classes :
+            continue    
+        
         # find r's for this class
         rs = np.where((M_ri.class_r == c) * (wP_r > 0))[0]
         
@@ -118,7 +117,11 @@ def model_update(K_id, B_id, w_d, P_dr, M_ri, models_I, **config):
         
         N  = models_I.I[c].size
         
-        for n0, n1, dn in tqdm(utils.chunker(nchunks, N), disable = quiet, leave = False):
+        # mpi over n
+        n0, n1, dn = utils.chunker_mpi(size, models_I.I[c].size)
+        n0, n1, dn = n0[rank], n1[rank], dn[rank]
+        
+        for n00, n11, ddn in tqdm(utils.chunker(nchunks, dn), disable = quiet, leave = False):
             index.fill(0)
             PwC.fill(0)
             for r in tqdm(rs, disable = quiet, leave = False):
@@ -135,8 +138,8 @@ def model_update(K_id, B_id, w_d, P_dr, M_ri, models_I, **config):
                 if len(frames) == 0:
                     continue
                 
-                for n in range(n0, n1):
-                    ni = n-n0
+                for ni in range(ddn):
+                    n = n0 + n00 + ni
                     pixels = np.concatenate([np.where(mm == n)[0] for mm in m])
                      
                     C        = config['C'][pixels]
@@ -158,41 +161,33 @@ def model_update(K_id, B_id, w_d, P_dr, M_ri, models_I, **config):
                     
                     assert(np.all((index+I) < M))
                     PK[ni,  j: j + I] = P_rd[r, d0] * K[(i, d)]
-                    BwC[ni, j: j + I] = B[(i, d)] / (models_I.w[d0] * C[i])
+                    BwC[ni, j: j + I] = B[(i, d)] / (w_d[d0] * C[i])
                     index[ni] += I
                  
-            for n in range(n0, n1):
-                ni = n-n0
+            for ni in range(ddn):
+                n = n0 + n00 + ni
                 j  = index[ni]
                 a  = PK[ni, :j]
                 b  = BwC[ni, :j]
                 cc = PwC[ni]
                 out = utils.solve_axbc(a, b, cc, fill_value = 0., ftol = 1e-3, xtol = 1e-3, maxiters = 1000, algorithm = 'Newton')
-                Is[c-c0][n] = out
-
+                Is[c][n] = out
+    
     print(f'{rank=} {skipped_no_photons=} {skipped_frames=} {skipped_rs=}')
         
     # unflatten
-    for c in range(c0, c1):
-        Is[c-c0] = Is[c-c0].reshape(models_I.I[c].shape)
+    print(f'rank {rank} done, reducing models...')
+    sys.stdout.flush()
+    for c in tqdm(range(len(models_I.I)), desc = 'reducing models', disable = quiet):
+        Is[c] = Is[c].reshape(models_I.I[c].shape)
+        Is[c] = comm.allreduce(Is[c])
     
-    print(f'rank {rank} done, gathering models...')
-    sys.stdout.flush()
     comm.barrier()
-    if rank == 0 : t0 = time.time()
-    I       = comm.gather(Is)
-    classes = comm.gather(my_classes)
-    if rank == 0 : gather_time = time.time() - t0
-    print(f'{rank=} gathering finished...')
+    
+    print(f'{rank=} reducing finished...')
     sys.stdout.flush()
-    if rank == 0:
-        t0 = time.time()
-        I       = flatten(I)
-        classes = flatten(classes)
-        flatten_time = time.time()-t0
-        print(f'{rank=} {classes=} {gather_time=} {len(I)=}')
-        sys.stdout.flush()
-    return I
+    
+    return Is
 
         
         

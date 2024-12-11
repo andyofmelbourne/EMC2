@@ -33,23 +33,57 @@ def calculate_rotation_matrices(Mrot, M_in_plane, M_sphere, queue, context):
         int n = r / M_in_plane ;
         int m = r % M_in_plane ;
         
-        float i = n + 0.5;
+        float i = (float)n + 0.5;
+        float j = (float)m + 0.5;
         float phi  = acos(1 - 2 * i / M_sphere);
-        float phi_2 = 2. * M_PI * m / M_in_plane; 
+        float phi_2 = 2. * M_PI * j / M_in_plane; 
         float goldenRatio = (1. + sqrt(5.)) / 2.;
         float theta = 2. * M_PI * i / goldenRatio;
+
+        float Rl[9];
         
-        R[r * 9 + 0] = -sin(phi_2) * sin(theta) + cos(phi) * cos(phi_2) * cos(theta) ;
-        R[r * 9 + 1] = -sin(phi_2)*cos(phi)*cos(theta) - sin(theta)*cos(phi_2) ;
-        R[r * 9 + 2] = sin(phi)*cos(theta) ;
+        Rl[0] = -sin(phi_2) * sin(theta) + cos(phi) * cos(phi_2) * cos(theta) ;
+        Rl[1] = -sin(phi_2)*cos(phi)*cos(theta) - sin(theta)*cos(phi_2) ;
+        Rl[2] = sin(phi)*cos(theta) ;
         
-        R[r * 9 + 3] = sin(phi_2)*cos(theta) + sin(theta)*cos(phi)*cos(phi_2) ;
-        R[r * 9 + 4] = -sin(phi_2)*sin(theta)*cos(phi) + cos(phi_2)*cos(theta) ;
-        R[r * 9 + 5] = sin(phi)*sin(theta) ;
+        Rl[3] = sin(phi_2)*cos(theta) + sin(theta)*cos(phi)*cos(phi_2) ;
+        Rl[4] = -sin(phi_2)*sin(theta)*cos(phi) + cos(phi_2)*cos(theta) ;
+        Rl[5] = sin(phi)*sin(theta) ;
         
-        R[r * 9 + 6] = -sin(phi)*cos(phi_2) ;
-        R[r * 9 + 7] = sin(phi)*sin(phi_2) ;
-        R[r * 9 + 8] = cos(phi) ;
+        Rl[6] = -sin(phi)*cos(phi_2) ;
+        Rl[7] = sin(phi)*sin(phi_2) ;
+        Rl[8] = cos(phi) ;
+        
+        // apply orientation offset to keep the poles away from 
+        // any symmetry axes that might be applied
+        float Ro[9]; 
+        phi   = 1.2 * M_PI / 4.;
+        phi_2 = 1.3660358560403127 * M_PI;
+        theta = 1.4316602255033495 * M_PI;
+        
+        Ro[0] = -sin(phi_2) * sin(theta) + cos(phi) * cos(phi_2) * cos(theta) ;
+        Ro[1] = -sin(phi_2)*cos(phi)*cos(theta) - sin(theta)*cos(phi_2) ;
+        Ro[2] = sin(phi)*cos(theta) ;
+        
+        Ro[3] = sin(phi_2)*cos(theta) + sin(theta)*cos(phi)*cos(phi_2) ;
+        Ro[4] = -sin(phi_2)*sin(theta)*cos(phi) + cos(phi_2)*cos(theta) ;
+        Ro[5] = sin(phi)*sin(theta) ;
+        
+        Ro[6] = -sin(phi)*cos(phi_2) ;
+        Ro[7] = sin(phi)*sin(phi_2) ;
+        Ro[8] = cos(phi) ;
+        
+        R[r * 9 + 0] = Rl[0] * Ro[0] + Rl[1] * Ro[3] + Rl[2] * Ro[6];
+        R[r * 9 + 1] = Rl[0] * Ro[1] + Rl[1] * Ro[4] + Rl[2] * Ro[7];
+        R[r * 9 + 2] = Rl[0] * Ro[2] + Rl[1] * Ro[5] + Rl[2] * Ro[8];
+        
+        R[r * 9 + 3] = Rl[3] * Ro[0] + Rl[4] * Ro[3] + Rl[5] * Ro[6];
+        R[r * 9 + 4] = Rl[3] * Ro[1] + Rl[4] * Ro[4] + Rl[5] * Ro[7];
+        R[r * 9 + 5] = Rl[3] * Ro[2] + Rl[4] * Ro[5] + Rl[5] * Ro[8];
+        
+        R[r * 9 + 6] = Rl[6] * Ro[0] + Rl[7] * Ro[3] + Rl[8] * Ro[6];
+        R[r * 9 + 7] = Rl[6] * Ro[1] + Rl[7] * Ro[4] + Rl[8] * Ro[7];
+        R[r * 9 + 8] = Rl[6] * Ro[2] + Rl[7] * Ro[5] + Rl[8] * Ro[8];
         }
 
     """).build()

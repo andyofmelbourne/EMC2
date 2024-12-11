@@ -243,7 +243,7 @@ class Mapping(Tomograms):
                     
                     // 2 x pi rotations about x-axis
                     for (int k=0; k<2; k++) {
-                        y       = -coord.y ;
+                        coord.y = -coord.y ;
                         coord.z = -coord.z ;
                     
                     // 6 x pi / 3 rotations about z-axis
@@ -252,6 +252,32 @@ class Mapping(Tomograms):
                         y = coord.y ;
                         coord.x = x * c - y * s;
                         coord.y = x * s + y * c;
+                        
+                        j += W_offset;
+                        out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
+                            
+                        j += W_offset;
+                        out_n[j] = convert_int_rte(i0 - coord.x) * M * M + convert_int_rte(i0 - coord.y) * M + convert_int_rte(i0 - coord.z);
+                    }}
+                    """
+                    stest = """
+                    float c = 0.5;
+                    float s = 0.8660254037844386;
+                    float x, y, z;
+                     
+                    j = r * chunk_size_i + i - W_offset;
+                    
+                    // 2 x pi rotations about z-axis
+                    for (int k=0; k<2; k++) {
+                        coord.x = -coord.x ;
+                        coord.y = -coord.y ;
+                    
+                    // 6 x pi / 3 rotations about x-axis
+                    for (i=0; i<6; i++) {
+                        z = coord.z ;
+                        y = coord.y ;
+                        coord.y = y * c - z * s;
+                        coord.z = y * s + z * c;
                         
                         j += W_offset;
                         out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);

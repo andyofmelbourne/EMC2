@@ -420,6 +420,9 @@ def save_prob(prob, **config):
     which we do, so yes
     """
     fnam = os.path.join(config['working_directory'], 'probability_matrix.h5')
+    if rank == 0: 
+        print(f'saving probability matrix to {fnam}')
+        sys.stdout.flush()
     
     P = prob.P
     d_start = config['d_start_mpi'][rank]
@@ -452,31 +455,42 @@ def save_prob(prob, **config):
 
 def get_model_slices(Is):
     N = Is[0].shape[0]
+    classes = []
     
     slices = []
-    for i in Is :
-        if i.ndim == 2 :
-            slices.append(i)
-        elif i.ndim == 3 :
-            slices.append(i[N//2])
-            slices.append(i[:, N//2])
-            slices.append(i[:, :, N//2])
-    return np.array(slices)
+    for i, I in enumerate(Is) :
+        if I.ndim == 2 :
+            slices.append(I)
+            classes.append(i)
+        elif I.ndim == 3 :
+            slices.append(I[N//2])
+            classes.append(i)
+            
+            slices.append(I[:, N//2])
+            classes.append(i)
+            
+            slices.append(I[:, :, N//2])
+            classes.append(i)
+    print(f'{np.array(slices).shape=}')
+    return np.array(slices), np.array(classes)
     
 
-def make_models_2D_image(Is):
+def make_models_2D_image(Is, classes = None):
     # 3D --> 3 x 2D slices
+
+    if classes is None :
+        classes = np.arange(len(Is))
     
     # calculate grid 
     n = math.ceil(len(Is)**0.5)
-
+    
     N = Is[0].shape[0]
     
     slices_im = np.zeros((n * N, n * N), dtype = np.float32)
-
+    
     # output centre positions
-    positions = []
-    classes   = []
+    positions  = []
+    classes_im = []
     
     for i in range(n):
         for j in range(n):
@@ -486,9 +500,9 @@ def make_models_2D_image(Is):
                 x = N * (c % n)  + N/2 + 0.5
                 y = N * (c // n) + N/2 + 0.5
                 positions.append((x, y))
-                classes.append(c)
+                classes_im.append(classes[c])
     
-    return slices_im, {'positions': positions, 'classes': classes, 'N': N}
+    return slices_im, {'positions': positions, 'classes': classes_im, 'N': N}
 
 def save_models(I, **config):
     fnam = os.path.join(config['working_directory'], 'models.h5')
@@ -504,26 +518,32 @@ def save_models(I, **config):
 def save_model_slices(models_I, **config):
     fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
     
-    slices = get_model_slices(models_I.I)
+    slices, classes = get_model_slices(models_I.I)
     
     N = config['iteration']
     with h5py.File(fnam, 'r+') as f:
-        g = f[f'iteration_{N}']
-        k = 'model_slices'
+        k = f'iteration_{N}'
+        if k not in f:
+            g = f.create_group(k)
+        else :
+            g = f[k]
         
-        if k in g and g[k].shape == slices.shape :
-            g[k][:] = slices
-        elif k in g and g[k].shape != slices.shape :
-            del g[k] 
-        
-        if k not in g:
-            g.create_dataset(k, data = slices, chunks = slices.shape, compression = 'gzip')
-        
-        k = 'model_dq'
-        if k in g :
+        for k, v in zip(['model_slices', 'slice_classes'], [slices, classes]):
+            if k in g and g[k].shape == v.shape :
+                g[k][:] = v
+            
+            elif k in g and g[k].shape != v.shape :
+                del g[k] 
+            
+            if k not in g:
+                g.create_dataset(k, data = v, chunks = v.shape, compression = 'gzip')
+
+
+        k ='model_dq' 
+        if k in g:
             del g[k]
         g[k] = models_I.dq
-
+        
 def save_iteration_info(prob, W_ri, **config):
     fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
 
@@ -549,7 +569,11 @@ def save_iteration_info(prob, W_ri, **config):
                     f[key].resize(N, axis=0)
         
         with h5py.File(fnam, 'r+') as f:
-            g = f.create_group(f'iteration_{N}')
+            k = f'iteration_{N}'
+            if k in f :
+                g = f[k]
+            else :
+                g = f.create_group(k)
             g.create_dataset('occupancy_r',         shape = (R,), dtype = prob.occ.dtype, fillvalue = 0)
             g.create_dataset('P_gini_d',            shape = (D,), dtype = prob.gini.dtype)
             g.create_dataset('Q_d',                 shape = (D,), dtype = prob.Q.dtype)

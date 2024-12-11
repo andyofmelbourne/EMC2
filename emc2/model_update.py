@@ -35,7 +35,7 @@ class Model_update():
         
     merge tomograms (then I):
         W'_ri = N_ri / D_ri
-     
+         
         A_n = sum_ri M^-1(W'_ri, r, i)_n
         B_n = sum_ri M^-1(1,     r, i)_n
         I_n = A_n / B_n
@@ -68,26 +68,31 @@ class Model_update():
         P_dr, 
         Wsums_r, 
         models_I,
+        background_classes = [],
         update_fluence = False,
         likelihood     = 'Poisson',
         frame_model    = 'basic',
         maximise       = 'I',
+        models         = None,
+        C              = None,
         **config
     ):
         self.K_di    = K_di
         self.M_ri    = M_ri
         self.P_dr    = P_dr
         self.Wsums_r = Wsums_r
-        self.w_d     = models_I.w
+        self.w_d     = models_I.w.copy()
+    
+        self.background_classes = background_classes
         
         # confusing having model intensities as I and number of pixels I
-        self.Is      = models_I.I
+        self.Is      = []
         self.Os      = []
         # set to zero 
-        for c in range(len(self.Is)):
-            self.Is[c][:] = 0
+        for c in range(len(models_I.I)):
+            self.Is.append(np.zeros(models_I.I[c].shape, dtype = float))
             self.Os.append(np.zeros_like(self.Is[c]))
-
+        
         if update_fluence :
             self.w_d[:] = 0.
             self.w_update_d = np.zeros_like(self.w_d)
@@ -95,10 +100,10 @@ class Model_update():
         self.D, self.R = self.P_dr.shape
         self.I         = K_di.shape[1]
         
-        self.C = config['C']
-        self.models = config['models']
+        self.C      = C
+        self.models = models
         
-        self.r_chunk_size = 256
+        self.r_chunk_size = 64
         self.d_chunk_size = 4*1024
         
         self.update_fluence = update_fluence
@@ -139,54 +144,65 @@ class Model_update():
             comm.barrier()
         
         for r0, r1, dr in tqdm(r_iter, desc = 'merging over I', total = Nr, disable = quiet):
-            N_ri, D_ri = self.calc_N_D_rchunk(
-                np.ascontiguousarray(self.P_dr[:, r0:r1]), 
-                self.Wsums_r[r0:r1], 
-                PK_ri[:dr]
-            )
-            
-            for c in range(len(self.Is)):
+            # now subdivide r0->r1 into chunks speparated by changes in class or geometry
+            rs = utils.get_chunks(r0, r1, self.M_ri.changes)
+             
+            for r00, r11 in rs :
+                dr = r11-r00
+                N_ri, D_ri = self.calc_N_D_rchunk(
+                    np.ascontiguousarray(self.P_dr[:, r00:r11]), 
+                    self.Wsums_r[r00:r11], 
+                    PK_ri[:dr]
+                )
+
+                # get class for this chunk
+                c = self.M_ri.class_r[r00]
+                
                 I = self.Is[c]
                 O = self.Os[c]
-                
-                # get r --> class index mapping
-                r = np.where(self.M_ri.class_r[r0:r1] == c)[0]
-                
-                if len(r) > 0 :
-                    # calculate pixel mappings
-                    for _ in tqdm(range(1), desc = 'calculating pixel mapping (gpu)', leave = False, disable = quiet):
-                        n = self.M_ri[r0+r[0]: r0+1+r[-1], :]
-                    # this is needed as there are duplicates along axis 0
-                    # when symmetry mapping is enabled
-                    # np.add.at allows for duplicates
-                     
-                    if self.maximise == 'I':
-                        pass
-                        
-                    elif self.maximise == 'W':
-                        D_ri[D_ri==0] = 1
-                        N_ri         /= D_ri
-                        D_ri[:]       = 1
-                    else :
-                        err = f'failed to parse maximise option: {self.maximise}'
-                        raise ValueError(err)
                     
-                    for _ in tqdm(range(1), desc = 'np.add.at I', leave = False, disable = quiet):
-                        #np.add.at(I.ravel(), n, N_ri[r])
-                        for m in n :
-                            I += np.bincount(m.ravel(), N_ri[r].ravel(), minlength = I.size).reshape(I.shape)
+                # calculate pixel mappings
+                for _ in tqdm(range(1), desc = 'calculating pixel mapping (gpu)', leave = False, disable = quiet):
+                    n = self.M_ri[r00: r11, :]
+                # this is needed as there are duplicates along axis 0
+                # when symmetry mapping is enabled
+                # np.add.at allows for duplicates
+                         
+                if self.maximise == 'I':
+                    pass
                     
-                    for _ in tqdm(range(1), desc = 'np.add.at O', leave = False, disable = quiet):
-                        #np.add.at(O.ravel(), n, D_ri[r])
-                        for m in n :
-                            O += np.bincount(m.ravel(), D_ri[r].ravel(), minlength = O.size).reshape(O.shape)
+                elif self.maximise == 'W':
+                    D_ri[D_ri==0] = 1
+                    N_ri         /= D_ri
+                    D_ri[:]       = 1
+                else :
+                    err = f'failed to parse maximise option: {self.maximise}'
+                    raise ValueError(err)
+
+                #N = I.shape[0]
+                #i = np.where(n[0] == (32*N*N + 32*N + 48))
+                #if len(i[0]) > 0:
+                #    print(f'{i=}')
+                
+                for _ in tqdm(range(1), desc = 'np.add.at I', leave = False, disable = quiet):
+                    #np.add.at(I.ravel(), n, N_ri[r])
+                    for m in n :
+                        I += np.bincount(m.ravel(), N_ri.ravel(), minlength = I.size).reshape(I.shape)
+                
+                for _ in tqdm(range(1), desc = 'np.add.at O', leave = False, disable = quiet):
+                    #np.add.at(O.ravel(), n, D_ri[r])
+                    for m in n :
+                        O += np.bincount(m.ravel(), D_ri.ravel(), minlength = O.size).reshape(O.shape)
             
         # mpi reduce
         for c in range(len(self.Is)):
+            if c in self.background_classes :
+                continue    
+            
             if rank == 0 :
                 I = np.empty_like(self.Is[c])
                 O = np.empty_like(self.Os[c])
-
+            
             else :
                 I = None
                 O = None
@@ -201,7 +217,7 @@ class Model_update():
                 I /= O
                 self.Is[c] = I.copy()
 
-        return self.Is
+        return self.Is, self.w_d
 
     def fluence_update(self, P_dr, Wsums_r):
         # a_d   = sum_i K_di

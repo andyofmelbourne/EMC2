@@ -3,13 +3,19 @@ import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore
 from collections import defaultdict
+
 import signal
 from pathlib import Path
 import pyqtgraph.exporters
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery2/iteration_info.h5'
-cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+cxi_file = None
+
+#fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
+#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
 labels_key = '/manual_selection'
+#iteration = 484
 iteration = 1
 
 # load labels if any 
@@ -17,7 +23,8 @@ labels = None
 if cxi_file and Path(cxi_file).is_file():
     # find cache
     a = Path(fnam).parent.joinpath('cachdir')
-    b = list(a.glob('*sparse.h5'))
+    stem = Path(cxi_file).stem
+    b = list(a.glob(f'{stem}*sparse.h5'))
     
     data_file = None
     if len(b) == 1 :
@@ -27,6 +34,7 @@ if cxi_file and Path(cxi_file).is_file():
     elif len(b) > 1 :  
         print('multiple files found in cachdir, skipping labels')
     
+    print(f'{data_file=} {a=} {b=}')
     # load frame references
     if data_file :
         with h5py.File(data_file) as f:
@@ -38,7 +46,7 @@ if cxi_file and Path(cxi_file).is_file():
             for k in g.keys():
                 if 'crap' in k :
                     pen = (255, 0, 0, 100)
-                elif 'sample' in k :
+                elif 'sample' in k or 'good' in k:
                     pen = (0, 255, 0, 100)
                 else :
                     pen = tuple(np.random.randint(0, 256, 3)) + (255,)
@@ -90,10 +98,11 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.exporter.parameters()['width'] = 800
         self.exporter.parameters()['height'] = 800
         
-        # get data
-        self.update_plots(1)
-        
         self.iteration = iteration
+        
+        # get data
+        self.update_plots(iteration)
+        
     
     def keyPressEvent(self, event):
         super(GraphicsLayoutWidget, self).keyPressEvent(event)
@@ -145,6 +154,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.setWindowTitle(f'oocupancy per class per frame: iteration {iteration}')
 
 
+
 pg.setConfigOption('background', 'k')
 pg.setConfigOption('foreground', 'w')
 
@@ -154,12 +164,19 @@ app = pg.mkQApp("EMC scatter")
 
 # Enable antialiasing for prettier plots
 pg.setConfigOptions(antialias=True)
+pg.setConfigOptions(imageAxisOrder='row-major')
 
 win = GraphicsLayoutWidget(show=True, title="Per frame per class occupancy")
 win.resize(600,600)
 #win.setWindowTitle('pyqtgraph example: Plotting')
 
 win.show()
+
+timer = QtCore.QTimer()
+timer.timeout.connect(lambda : win.update_plots(win.iteration + 1))
+timer.start(1000)
+#QtCore.QApplication.exec_()
+
 
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal.SIG_DFL) # allow Control-C

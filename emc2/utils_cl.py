@@ -31,6 +31,22 @@ def opencl_init(rank):
     context = cl.Context([devices[rank % len(devices)]])
     queue   = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
+
+def opencl_init_cpu(rank):
+    # find an opencl device (preferably a GPU) in one of the available platforms
+    done = False
+    for p in cl.get_platforms():
+        devices = p.get_devices(cl.device_type.CPU)
+        if (len(devices) > 0) :
+            break
+    
+    print('number of devices:', len(devices))
+    print(rank, 'my device:', devices[rank % len(devices)])
+    sys.stdout.flush()
+    
+    context = cl.Context([devices[rank % len(devices)]])
+    queue   = cl.CommandQueue(context)
+    return {'context': context, 'queue': queue}
     
 
 # these are much faster than pyopencl's packaged routines for some reason

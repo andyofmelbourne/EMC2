@@ -520,7 +520,7 @@ class Tomograms():
         
         self.make_buffer(shape)
         
-        self.W_cl = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
+        self.W_cl, event = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
         
         if self.cpu :
             cl.enqueue_copy(self.queue, self.W[:(r_stop-r_start)], self.W_cl.data)
@@ -548,7 +548,7 @@ class Tomograms():
             orientation_offset = np.int32(self.orientation_r[r00])
             
             if d == 2 and ro == 0 :
-                self.cl_code.calculate_tomograms_static_v0(self.queue, (i1-i0,), None,
+                event = self.cl_code.calculate_tomograms_static_v0(self.queue, (i1-i0,), None,
                         self.W_cl.data,
                         self.models.I_cl[c], 
                         self.qxy[q][0].data, 
@@ -559,7 +559,7 @@ class Tomograms():
                         W_offset)
             
             elif d == 2 and ro > 0 :
-                self.cl_code.calculate_tomograms_2D_v0(self.queue, (r11-r00, i1-i0), None,
+                event = self.cl_code.calculate_tomograms_2D_v0(self.queue, (r11-r00, i1-i0), None,
                         self.W_cl.data,
                         self.models.I_cl[c], 
                         self.rotation_matrices[(d, ro)].data,
@@ -572,7 +572,7 @@ class Tomograms():
                         W_offset)
              
             elif d == 3 and ro > 0 :
-                self.cl_code.calculate_tomograms_3D_v0(self.queue, (r11-r00, i1-i0), None,
+                event = self.cl_code.calculate_tomograms_3D_v0(self.queue, (r11-r00, i1-i0), None,
                         self.W_cl.data,
                         self.models.I_cl[c], 
                         self.rotation_matrices[(d, ro)].data,
@@ -584,4 +584,4 @@ class Tomograms():
                         orientation_offset,
                         np.int32(i0),
                         W_offset)
-        return self.W_cl
+        return self.W_cl, event

@@ -71,7 +71,7 @@ def geometry(**config):
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
     
     elif config['pixels_per_voxel'] and config['model_length'] :
-        rp    = dx * config['pixels_per_voxel'] * M 
+        rp    = dx * config['pixels_per_voxel'] * (M // 2)
         z     = xyz[2].ravel()[0]
         r     = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r

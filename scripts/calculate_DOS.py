@@ -4,8 +4,10 @@ import signal
 from pathlib import Path
 from collections import OrderedDict
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery2/iteration_info.h5'
-cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+#fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery3/iteration_info.h5'
+#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
+cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
 labels_key = '/manual_selection'
 iteration = 1
 
@@ -14,7 +16,8 @@ labels = None
 if cxi_file and Path(cxi_file).is_file():
     # find cache
     a = Path(fnam).parent.joinpath('cachdir')
-    b = list(a.glob('*sparse.h5'))
+    stem = Path(cxi_file).stem
+    b = list(a.glob(f'{stem}*sparse.h5'))
     
     data_file = None
     if len(b) == 1 :
@@ -59,15 +62,21 @@ with h5py.File(fnam, 'r') as f:
             print('warning could not find {k}') 
         
 
-print(occ_ilc[-1])
+#for i in range(occ_ilc.shape[0]):
+#    print(f'iteration {i}')
+#    print(occ_ilc[i])
+for c in range(occ_ilc.shape[-1]):
+    print(f'class: {c:>3} ', end = '') 
+    for key, o in zip(labels.keys(), occ_ilc[-1, :, c]): 
+            print(f'{key}: {o:>4} ', end = '')
+    print()
 
-print(f'{occ_ilc.shape=}')
 
 a = occ_ilc[:, 0, :]
 b = occ_ilc[:, 1, :]
 DOS = 1 - np.sum(a * b, axis=-1) / (np.sum(a**2, axis=-1) * np.sum(b**2, axis=-1))**0.5
-for i in range(iterations):
-    print(i, np.round(100 * DOS[i], 2), '%')
+#for i in range(iterations):
+#    print(i, np.round(100 * DOS[i], 2), '%')
 
 
 from matplotlib.ticker import PercentFormatter
@@ -77,7 +86,7 @@ fig.set_tight_layout(True)
 fig.set_size_inches(10, 5)
 
 
-ax.bar(np.arange(DOS.shape[0]), DOS,  width = 1, align='edge', color='lightcoral', edgecolor='k', alpha=0.8, linewidth=1, zorder=3)
+ax.bar(np.arange(DOS.shape[0]), DOS,  width = 1, align='edge', color='lightcoral', edgecolor='k', alpha=0.8, linewidth=0.2, zorder=3)
 ax.spines[['right', 'top']].set_visible(False)
 ax.set_xlim([0, DOS.shape[0]])
 ax.set_title("Degree Of Separation between good and bad classes")
