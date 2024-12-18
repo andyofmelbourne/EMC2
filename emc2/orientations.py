@@ -3,16 +3,7 @@ import pyopencl.array
 import numpy as np
 import tqdm
 
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
-
-if rank == 0 :
-    quiet = False
-else :
-    quiet = True
-
+quiet = True
 
 # perhaps opencl image has each pixel coordinate at 0.5, 1.5 ... (N-1) + 0.5
 # yes thats it # the coordinates are also transposed

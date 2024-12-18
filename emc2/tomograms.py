@@ -22,6 +22,7 @@ import pyopencl.array
 from . import orientations 
 from .utils_cl import to_gpu
 from . import utils
+from .model import load_models_cl
 
 def get_rotation_matrices(queue = None, context = None, rotation_order = 10, dimensions = 3, **kwargs):
     if dimensions == 3 and rotation_order > 0 :
@@ -292,7 +293,9 @@ class Tomograms():
     for each unique combination of (dimension, rotation_order)
     """
     def __init__(self, models_I, cpu = False, **config):
-        queue = config['queue']
+        queues  = config['queues']
+        context = config['context']
+
         
         # rotation matrices
         # -----------------
@@ -304,57 +307,20 @@ class Tomograms():
         
         dr = set(zip(self.dimensions, self.rotation_orders))
         
-        self.rotation_matrices = {}
-        for (d, r) in set(dr):
-            self.rotation_matrices[(d, r)] = get_rotation_matrices(
-                queue   = config['queue'], 
-                context = config['context'], 
-                rotation_order = r,
-                dimensions     = d
-            )
+        self.rotation_matrices_q = len(queues) * [{}]
+        for q, queue in enumerate(queues):
+            for (d, r) in set(dr):
+                self.rotation_matrices_q[q][(d, r)] = get_rotation_matrices(
+                    queue   = queue, 
+                    context = context, 
+                    rotation_order = r,
+                    dimensions     = d
+                )
         
-        self.dq     = config['dq']
-        self.i0     = config['i0']
-        self.models = models_I
         
         ##########
         self.rotations = 1 # hack
         self.update_mask(np.ones(config['pixels'], dtype = bool), **config)
-        """
-        self.pixels = config['pixels']
-        self.pixel_indices = np.arange(self.pixels)
-        # W_ri.shape = (R, I)
-        self.shape = (self.rotations, self.pixels)
-        
-        # per pixel q values
-        # ------------------
-        self.qxy       = []
-        self.xy_offset = []
-        xyz = config['xyz']
-        if config['pointing_fluctuations'] :
-            N, step = config['pointing_fluctuations'] 
-            for n in (np.arange(N) - (N//2)):
-                for m in (np.arange(N) - (N//2)):
-                    xyz2 = xyz.copy()
-                    xyz2[0] += step * n
-                    xyz2[1] += step * m
-                    q = utils.calc_q(config['wavelength'], xyz2)
-                    print(n, m, step * n, step * m, np.max(np.sum(q**2, axis=0)**0.5), config['q_max'], config['q_max_model'])
-                    
-                    self.xy_offset.append( [n * step, m * step] ) 
-                    self.qxy.append((
-                        to_gpu(q[0], queue = queue),
-                        to_gpu(q[1], queue = queue),
-                        to_gpu(q[2], queue = queue),
-                    ))
-        else :
-            self.xy_offset.append( [0, 0] ) 
-            self.qxy.append((
-                to_gpu(config['q'][0], queue = queue),
-                to_gpu(config['q'][1], queue = queue),
-                to_gpu(config['q'][2], queue = queue),
-            ))
-        """
         ##########
 
         # ------------------------------------------------------
@@ -371,15 +337,15 @@ class Tomograms():
         ors = []
         srs = []
             
-        for q in range(len(self.xy_offset)) :
-            for c in range(config['models']) :
-                R = self.rotation_matrices[(self.dimensions[c], self.rotation_orders[c])] 
+        for c in range(config['models']) :
+            for q in range(len(self.xy_offset)) :
+                R = self.rotation_matrices_q[0][(self.dimensions[c], self.rotation_orders[c])] 
                 
                 if R is None :
                     r = 1
                 else :
                     r = R.shape[0]
-
+                
                 s = self.symmetry_index[c]
                 
                 srs += r * [s]
@@ -406,10 +372,11 @@ class Tomograms():
         
         self.dtype = np.float32
         
-        self.W_cl = None
+        self.W_cl_q = len(queues) * [None]
         
-        self.queue   = queue 
+        self.queues  = queues
         self.context = config['context'] 
+        self.active_queue = 0
         
         if config['interpolation_forward'] == 'linear':
             self.interpolation = 'LINEAR'
@@ -420,17 +387,28 @@ class Tomograms():
 
         self.log = Tomograms_log(self)
         self.cpu = cpu
+
+        # load models
+        # -----------
+        self.load_models(models_I)
         
         self.compile()
+
+    def load_models(self, models_I):
+        self.dq     = models_I.dq
+        self.i0     = models_I.i0
+        self.models_q = []
+        for queue in self.queues :
+            self.models_q.append(load_models_cl(models_I.dimensions, models_I.I, queue, self.context))
     
     def set_log(self, log = True):
         if log :
             self.cl_code = self.cl_code_log
         else :
             self.cl_code = self.cl_code_normal
-
+    
     def update_mask(self, new_mask, **config):
-        queue = config['queue']
+        queues = config['queues']
         
         pixels = np.sum(new_mask)
         self.pixels = pixels
@@ -439,7 +417,11 @@ class Tomograms():
         
         # per pixel q values
         # ------------------
-        self.qxy       = []
+        # this links the lists to each other! 
+        # https://stackoverflow.com/questions/12791501/why-does-this-code-for-initializing-a-list-of-lists-apparently-link-the-lists-to
+        #self.qxy_q     = len(queues) * [[]]
+        
+        self.qxy_q     = [[] for i in range(len(queues))]
         self.xy_offset = []
         xyz = config['xyz']
         if config['pointing_fluctuations'] :
@@ -452,18 +434,20 @@ class Tomograms():
                     q = utils.calc_q(config['wavelength'], xyz2)
                     
                     self.xy_offset.append( [n * step, m * step] ) 
-                    self.qxy.append((
-                        to_gpu(q[0][new_mask], queue = queue),
-                        to_gpu(q[1][new_mask], queue = queue),
-                        to_gpu(q[2][new_mask], queue = queue),
-                    ))
+                    for qi, queue in enumerate(queues):
+                        self.qxy_q[qi].append((
+                            to_gpu(q[0][new_mask], queue = queue),
+                            to_gpu(q[1][new_mask], queue = queue),
+                            to_gpu(q[2][new_mask], queue = queue),
+                        ))
         else :
             self.xy_offset.append( [0, 0] ) 
-            self.qxy.append((
-                to_gpu(config['q'][0][new_mask], queue = queue),
-                to_gpu(config['q'][1][new_mask], queue = queue),
-                to_gpu(config['q'][2][new_mask], queue = queue),
-            ))
+            for qi, queue in enumerate(queues):
+                self.qxy_q[qi].append((
+                    to_gpu(config['q'][0][new_mask], queue = queue),
+                    to_gpu(config['q'][1][new_mask], queue = queue),
+                    to_gpu(config['q'][2][new_mask], queue = queue),
+                ))
         
     
     def compile(self):
@@ -508,7 +492,7 @@ class Tomograms():
             
             if self.cpu :
                 self.W = np.empty(shape, dtype = self.dtype)
-
+    
     def __getitem__(self, key):
         """
         put pixels in the first dimension for efficient summing
@@ -518,9 +502,20 @@ class Tomograms():
         """
         r_start, r_stop, pixel_start, pixel_stop, shape = self.parse_key(key)
         
+        # set active queue 
+        self.active_queue      = (self.active_queue + 1) % len(self.queues)
+        self.queue             = self.queues[self.active_queue]
+        self.W_cl              = self.W_cl_q[self.active_queue]
+        self.qxy               = self.qxy_q[self.active_queue]
+        self.models            = self.models_q[self.active_queue]
+        self.rotation_matrices = self.rotation_matrices_q[self.active_queue]
+        
         self.make_buffer(shape)
         
-        self.W_cl, event = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
+        # making a new buffer each time seems to help with threading
+        #self.W_cl_q[self.active_queue] = self.W_cl
+        
+        self.W_cl, self.event = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
         
         if self.cpu :
             cl.enqueue_copy(self.queue, self.W[:(r_stop-r_start)], self.W_cl.data)
@@ -550,7 +545,7 @@ class Tomograms():
             if d == 2 and ro == 0 :
                 event = self.cl_code.calculate_tomograms_static_v0(self.queue, (i1-i0,), None,
                         self.W_cl.data,
-                        self.models.I_cl[c], 
+                        self.models[c], 
                         self.qxy[q][0].data, 
                         self.qxy[q][1].data, 
                         self.i0, 
@@ -561,7 +556,7 @@ class Tomograms():
             elif d == 2 and ro > 0 :
                 event = self.cl_code.calculate_tomograms_2D_v0(self.queue, (r11-r00, i1-i0), None,
                         self.W_cl.data,
-                        self.models.I_cl[c], 
+                        self.models[c], 
                         self.rotation_matrices[(d, ro)].data,
                         self.qxy[q][0].data, 
                         self.qxy[q][1].data, 
@@ -574,7 +569,7 @@ class Tomograms():
             elif d == 3 and ro > 0 :
                 event = self.cl_code.calculate_tomograms_3D_v0(self.queue, (r11-r00, i1-i0), None,
                         self.W_cl.data,
-                        self.models.I_cl[c], 
+                        self.models[c], 
                         self.rotation_matrices[(d, ro)].data,
                         self.qxy[q][0].data, 
                         self.qxy[q][1].data, 

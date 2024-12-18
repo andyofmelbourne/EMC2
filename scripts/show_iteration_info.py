@@ -97,7 +97,7 @@ def get_plots(fnam, iteration):
         k = f'iteration_{iteration}'
         if k not in f :
             return None, None, None, None
-
+        
         plots.append(f['Q'][()])
         titles.append('P logR')
 
@@ -110,13 +110,14 @@ def get_plots(fnam, iteration):
         g = f[k]
         plots.append(np.sort(g['P_gini_d'][()])[::-1])
         titles.append('P gini coefficient per frame')
-
+        
         plots.append(np.sort(g['Q_d'][()])[::-1])
         titles.append('P logR per frame')
-
+        
         #plots.append(np.sort(np.bincount(g['most_likely_model_d'][()])[::-1]))
-        plots.append(np.bincount(g['most_likely_model_d'][()]))
-        titles.append('model occupancy')
+        #plots.append(np.sort(g['occupancy_r'][()])[::-1])
+        plots.append(g['occupancy_r'][()])
+        titles.append('r-occupancy')
 
         R = g['occupancy_r'].shape[0]
         D = g['Q_d'].shape[0]
@@ -125,11 +126,11 @@ def get_plots(fnam, iteration):
 
 def get_most_likely(fnam, iteration):
     with h5py.File(fnam, 'r') as f:
-        k = f'iteration_{iteration}'
+        k = f'iteration_{iteration}/most_likely_model_d'
         if k not in f :
             return None
         
-        m_d = f[k]['most_likely_model_d'][()]
+        m_d = f[k][()]
     return m_d
 
 class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
@@ -338,7 +339,7 @@ class ImageView(pg.ImageView):
             if next : iteration += 1
             if last : iteration -= 1
             
-            if iteration <= max_iteration and iteration > 0 :
+            if iteration <= max_iteration and iteration >= 0 :
                 try :
                     im, pos, classes, N = get_slices(fnam, iteration)
                 except Exception as e:
@@ -364,7 +365,7 @@ class ImageView(pg.ImageView):
         im[im == 0] = np.nan
         plot = self.getView()
         plot.setTitle(f'iteration: {iteration}')
-        self.setImage(im**0.2, autoRange = False, autoLevels = False, autoHistogramRange = False)
+        self.setImage(im**0.1, autoRange = False, autoLevels = False, autoHistogramRange = False)
         #self.setImage(im, autoRange = False, autoLevels = False, autoHistogramRange = False)
         
         self.positions = pos

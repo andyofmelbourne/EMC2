@@ -7,10 +7,10 @@ import os
 import shutil
 import sys
 
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
+#from mpi4py import MPI
+#comm = MPI.COMM_WORLD
+#rank = comm.Get_rank()
+#size = comm.Get_size()
 
 def clip_scalar(val, vmin, vmax):
     """ convenience function to avoid using np.clip for scalar values 
@@ -277,17 +277,14 @@ def get_beta(
         beta_strategy = None,
         **kwargs):
     
-    if hasattr(beta, '__len__') and len(beta) == iterations:
-        beta = beta[iteration]
-    
-    elif beta :
-        out = beta
-    
-    elif beta_strategy == 'exponential':
-        beta = (beta_stop / beta_start)**(min(iteration, iterations)/iterations) * beta_start
+    if beta_strategy == 'exponential':
+        beta = (beta_stop / beta_start)**(min(iteration, iterations-1)/(iterations-1)) * beta_start
     
     elif beta_strategy == 'linear':
         beta = np.linspace(beta_start, beta_stop, iterations, endpoint = True)[min(iteration, iterations)]
+    
+    elif beta :
+        out = beta
     
     else :
         raise ValueError('could not resolve beta strategy from config')
@@ -375,6 +372,7 @@ def gini(x, w=None):
 
 
 def chunker(chunksize, size, offset = 0):
+    assert(size > 0)
     D      = math.ceil(size/chunksize)
     dstart = np.arange(D) * chunksize + offset
     dstop  = np.clip(dstart + chunksize, 0, size + offset)
@@ -412,46 +410,29 @@ def chunker_mpi_local(chunksize, size, N):
     return out
         
 
-def save_prob(prob, **config):
-    """
-    Should we save any metadata?
-    Should we compress? 
-    P is not really sparse unless we threshold
-    which we do, so yes
-    """
+def save_prob(P_dr, wsums_r, class_r, **config):
     fnam = os.path.join(config['working_directory'], 'probability_matrix.h5')
-    if rank == 0: 
-        print(f'saving probability matrix to {fnam}')
-        sys.stdout.flush()
     
-    P = prob.P
-    d_start = config['d_start_mpi'][rank]
-    d_stop  = config['d_stop_mpi'][rank]
-    D  = config['d_stop_mpi'][-1]
-    R  = P.shape[1]
+    print(f'saving probability matrix to {fnam}')
+    sys.stdout.flush()
     
-    if rank == 0 :
-        with h5py.File(fnam, 'w') as f:
-            f.create_dataset(
-                'P_dr', 
-                shape = (D, R),
-                dtype = P.dtype,
-                chunks = (1, R),
-                compression = 'gzip',
-                compression_opts = 1
-            )
+    D, R = P_dr.shape
+    
+    with h5py.File(fnam, 'w') as f:
+        f.create_dataset(
+            'P_dr', 
+            shape = (D, R),
+            dtype = P_dr.dtype,
+            chunks = (1, R),
+            compression = 'gzip',
+            compression_opts = 1
+        )
             
-            # shared by all processes
-            if hasattr(prob, 'wsums'):
-                f['wsums_r'] = prob.wsums
-    
-    comm.barrier()
-        
-    for r in range(size):
-        if r == rank :
-            with h5py.File(fnam, 'r+') as f:
-                f['P_dr'][d_start : d_stop] = P
-        comm.barrier()
+        f['beta']    = config['beta']
+        f['class_r'] = class_r
+        f['wsums_r'] = wsums_r
+        f['P_dr'][:] = P_dr
+    return True
 
 def get_model_slices(Is):
     N = Is[0].shape[0]
@@ -507,6 +488,7 @@ def make_models_2D_image(Is, classes = None):
 def save_models(I, **config):
     fnam = os.path.join(config['working_directory'], 'models.h5')
     print(f'saving models in {fnam}')
+    
     with h5py.File(fnam, 'w') as f:
         for c in range(len(I.I)):
             f[f'model_{c}'] = I.I[c]
@@ -517,6 +499,7 @@ def save_models(I, **config):
 
 def save_model_slices(models_I, **config):
     fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
+    print(f'saving model slices to {fnam} for iteration {config["iteration"]}')
     
     slices, classes = get_model_slices(models_I.I)
     
@@ -537,83 +520,70 @@ def save_model_slices(models_I, **config):
             
             if k not in g:
                 g.create_dataset(k, data = v, chunks = v.shape, compression = 'gzip')
-
-
+        
         k ='model_dq' 
         if k in g:
             del g[k]
         g[k] = models_I.dq
-        
-def save_iteration_info(prob, W_ri, **config):
-    fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
 
-    P = prob.P
-    d_start = config['d_start_mpi'][rank]
-    d_stop  = config['d_stop_mpi'][rank]
-    D       = config['total_frames']
-    R       = P.shape[1]
-    N       = config['iteration']+1
+def write_h5(f, k, v, compression = True, chunks = None):
+    if not hasattr(v, 'shape') or type(v) == str :
+        f[k] = v
+    else :
+        if k in f :
+            if f[k].shape == v.shape and f[k].dtype == v.dtype:
+                f[k][:] = v
+            else :
+                del f[k]
+        
+        if k not in f:
+            if not chunks:
+                chunks = v.shape
+            f.create_dataset(k, data = v, chunks = chunks, compression = 'gzip')
+        
+def save_iteration_info(P_dr, P_max_d, Q_d, rmax_d, class_r, orientation_r, occupancy_dc, **config):
+    fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
+    print(f'saving iteration info to {fnam} for iteration {config["iteration"]}')
+    
+    D, R    = P_dr.shape
+    N       = config['iteration']
     
     # initialise or resize datasets
-    if rank == 0: 
-        if N == 1 :
-            with h5py.File(fnam, 'w') as f:
-                f['iterations'] = N
-                f.create_dataset('beta',   shape = (1,),   maxshape = (None,),   dtype = np.float32)
-                f.create_dataset('Q',      shape = (1,),   maxshape = (None,),   dtype = np.float32)
-                f.create_dataset('P_gini', shape = (1,),   maxshape = (None,),   dtype = np.float32)
-        else :
-            keys = ['beta', 'Q', 'P_gini']
-            with h5py.File(fnam, 'r+') as f:
-                for key in keys:
-                    f[key].resize(N, axis=0)
-        
-        with h5py.File(fnam, 'r+') as f:
-            k = f'iteration_{N}'
-            if k in f :
-                g = f[k]
-            else :
-                g = f.create_group(k)
-            g.create_dataset('occupancy_r',         shape = (R,), dtype = prob.occ.dtype, fillvalue = 0)
-            g.create_dataset('P_gini_d',            shape = (D,), dtype = prob.gini.dtype)
-            g.create_dataset('Q_d',                 shape = (D,), dtype = prob.Q.dtype)
-            g.create_dataset('most_likely_state_d', shape = (D,), dtype = prob.rmax.dtype)
-            g.create_dataset('most_likely_model_d', shape = (D,), dtype = prob.rmax.dtype)
-            g.create_dataset('most_likely_orientation_d', shape = (D,), dtype = prob.rmax.dtype)
-            g.create_dataset('occupancy_dc',        shape = (D, config['models']), dtype = prob.occ_dc.dtype)
-    
-    if rank == 0 :
-        occupancy = np.empty((R,), dtype = prob.occ.dtype)
+    if N == 0 :
+        with h5py.File(fnam, 'w') as f:
+            f['iterations'] = N+1
+            f.create_dataset('beta',   shape = (1,),   maxshape = (None,),   dtype = np.float32)
+            f.create_dataset('Q',      shape = (1,),   maxshape = (None,),   dtype = np.float32)
+            f.create_dataset('P_gini', shape = (1,),   maxshape = (None,),   dtype = np.float32)
     else :
-        occupancy = None
+        # resize 
+        keys = ['beta', 'Q', 'P_gini']
+        with h5py.File(fnam, 'r+') as f:
+            for key in keys:
+                f[key].resize(N+1, axis=0)
+        
+    # write other results to iteration_{N}
+    with h5py.File(fnam, 'r+') as f:
+        k = f'iteration_{N}'
+        if k in f :
+            g = f[k]
+        else :
+            g = f.create_group(k)
+        
+        occ_r = np.sum(P_dr, axis=0)
+        write_h5(g, 'occupancy_r', occ_r)
+        write_h5(g, 'P_gini_d', P_max_d)
+        write_h5(g, 'Q_d', Q_d)
+        write_h5(g, 'most_likely_state_d', rmax_d)
+        write_h5(g, 'most_likely_model_d', class_r[rmax_d])
+        write_h5(g, 'occupancy_dc', occupancy_dc)
+        write_h5(g, 'most_likely_orientation_d', orientation_r[rmax_d])
+        f['iterations'][...] = N+1
+        f['beta'][N]   = config['beta']
+        f['Q'][N]      = np.mean(Q_d)
+        f['P_gini'][N] = np.mean(P_max_d)
     
-    comm.Reduce(prob.occ, occupancy, op = MPI.SUM, root = 0) 
-
-    Q = np.sum(prob.Q)
-    Q = comm.reduce(Q, op = MPI.SUM, root=0)
-
-    P_gini = np.sum(prob.gini)
-    P_gini = comm.reduce(P_gini, op = MPI.SUM, root=0)
-    comm.barrier()
-    
-    for r in range(size):
-        if r == rank :
-            with h5py.File(fnam, 'r+') as f:
-                g = f[f'iteration_{N}']
-                g['P_gini_d'][d_start : d_stop]            = prob.gini
-                g['Q_d'][d_start : d_stop]                 = prob.Q
-                g['most_likely_state_d'][d_start : d_stop] = prob.rmax
-                g['most_likely_model_d'][d_start : d_stop] = W_ri.class_r[prob.rmax]
-                g['occupancy_dc'][d_start : d_stop]        = prob.occ_dc
-                g['most_likely_orientation_d'][d_start : d_stop] = W_ri.orientation_r[prob.rmax]
-                
-                if rank == 0 :
-                    f['iterations'][...]  = N
-                    f['beta'][N-1]        = prob.beta
-                    f['Q'][N-1]           = Q / D
-                    f['P_gini'][N-1]      = P_gini / D
-                    g['occupancy_r'][:]   = occupancy
-        comm.barrier()
+    return True
 
 def get_iterations(**config):
     fnam = os.path.join(config['working_directory'], 'iteration_info.h5')

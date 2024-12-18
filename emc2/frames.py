@@ -194,11 +194,11 @@ class Frames():
         self.W_ri = W_ri
         self.w_d  = w_d
         self.C    = config['C']
-
+        
         self.frame_indices = B_di.data_getter.frame_indices
         self.pixel_indices = B_di.data_getter.pixel_indices
         self.r_indices     = W_ri.r_indices
-
+        
         self.shape = (B_di.shape[0], W_ri.shape[0], B_di.shape[1])
         self.dtype = np.float32
         self.F_dri    = None

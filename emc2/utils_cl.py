@@ -3,7 +3,7 @@ import pyopencl as cl
 import pyopencl.array 
 import numpy as np
 
-def opencl_init(rank):
+def opencl_init():
     # find an opencl device (preferably a GPU) in one of the available platforms
     done = False
     for p in cl.get_platforms():
@@ -25,12 +25,16 @@ def opencl_init(rank):
                 break
     
     print('number of devices:', len(devices))
-    print(rank, 'my device:', devices[rank % len(devices)])
+    print('devices:', devices)
     sys.stdout.flush()
     
-    context = cl.Context([devices[rank % len(devices)]])
-    queue   = cl.CommandQueue(context)
-    return {'context': context, 'queue': queue}
+    context = cl.Context(devices)
+    
+    # one queue for each device (maybe make 2 per device later)
+    queues  = [cl.CommandQueue(context, device) for device in devices]
+    # for testing
+    queues  = queues + [cl.CommandQueue(context, device) for device in devices]
+    return {'context': context, 'queues': queues}
 
 def opencl_init_cpu(rank):
     # find an opencl device (preferably a GPU) in one of the available platforms
@@ -41,10 +45,10 @@ def opencl_init_cpu(rank):
             break
     
     print('number of devices:', len(devices))
-    print(rank, 'my device:', devices[rank % len(devices)])
+    print('devices:', devices)
     sys.stdout.flush()
     
-    context = cl.Context([devices[rank % len(devices)]])
+    context = cl.Context(devices)
     queue   = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
     

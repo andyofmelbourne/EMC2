@@ -33,8 +33,7 @@ code_3D = """
                 R_l[j] = R[9*rotation + j];
             }}
             
-            float4 coord ;
-            float4 W;
+            float3 coord ;
             
             float qxl = qx[pixel];
             float qyl = qy[pixel];
@@ -68,7 +67,6 @@ code_2D = """
             int chunk_size_i = get_global_size(1);
             
             float2 coord ;
-            float4 W;
             
             coord.x = qx[pixel] / dq;
             coord.y = qy[pixel] / dq;
@@ -135,8 +133,8 @@ class Mapping(Tomograms):
     I[class[r_l[l]], n_li[l, i]] approx. W_ri[r_l[0], i]
     """
 
-    def __init__(self, **kwargs):
-        super().__init__(None, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
             
         # change from tomograms
         # to flattened model indices
@@ -155,13 +153,13 @@ class Mapping(Tomograms):
                 self.order.append(1)
             
             elif symmetry == 'inversion':
-                self.order.append(2)
+                self.order.append(1)
             
             elif symmetry == 'D6' and d == 2:
-                self.order.append(12)
+                self.order.append(3)
             
             elif symmetry == 'D6' and d == 3:
-                self.order.append(24)
+                self.order.append(3)
             
             else :
                 err = f'symmetry "{symmetry}" not supported'
@@ -171,19 +169,13 @@ class Mapping(Tomograms):
         self.code = {}
         for d, symmetry in zip(self.dimensions, self.symmetry):
             if d == 2 :
-                if symmetry == 'P1':
+                if symmetry in ['P1', 'inversion']:
                     s = """
                     j = r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 + coord.x) * M + convert_int_rte(i0 + coord.y);
-                    """
-                
-                elif symmetry == 'inversion' :
-                    s = """
-                    j = r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 + coord.x) * M + convert_int_rte(i0 + coord.y);
-                    
-                    j = W_offset + r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 - coord.x) * M + convert_int_rte(i0 - coord.y);
+                    if (length(coord) <= (float)(M/2 - 1))
+                        out_n[j] = convert_int_rte(i0 + coord.x) * M + convert_int_rte(i0 + coord.y);
+                    else 
+                        out_n[j] = 0;
                     """
                 
                 # just to see what it looks like in 2D
@@ -195,19 +187,23 @@ class Mapping(Tomograms):
                     float x, y;
                      
                     j = r * chunk_size_i + i - W_offset;
-                    
-                    // 6 x pi / 3 rotations about z-axis
-                    for (i=0; i<6; i++) {
-                        x = coord.x ;
-                        y = coord.y ;
-                        coord.x = x * c - y * s;
-                        coord.y = x * s + y * c;
                         
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 + coord.x) * M  + convert_int_rte(i0 + coord.y);
+                    if (length(coord) <= (float)(M/2) - 1) { 
+                        // 3 x pi / 3 rotations about z-axis
+                        for (i=0; i<3; i++) {
+                            x = coord.x ;
+                            y = coord.y ;
+                            coord.x = x * c - y * s;
+                            coord.y = x * s + y * c;
                             
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 - coord.x) * M  + convert_int_rte(i0 - coord.y);
+                            j += W_offset;
+                            out_n[j] = convert_int_rte(i0 + coord.x) * M  + convert_int_rte(i0 + coord.y);
+                        }
+                    } else {
+                        for (i=0; i<3; i++) {
+                            j += W_offset;
+                            out_n[j] = 0;
+                        }
                     }
                     """
                 
@@ -217,19 +213,13 @@ class Mapping(Tomograms):
                     ).build()
             
             if d == 3 :
-                if symmetry == 'P1':
+                if symmetry in ['P1', 'inversion'] :
                     s = """
                     j = r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
-                    """
-                
-                elif symmetry == 'inversion' :
-                    s = """
-                    j = r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
-                    
-                    j = W_offset + r * chunk_size_i + i;
-                    out_n[j] = convert_int_rte(i0 - coord.x) * M * M + convert_int_rte(i0 - coord.y) * M + convert_int_rte(i0 - coord.z);
+                    if (length(coord) <= (float)(M/2 - 1))
+                        out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
+                    else 
+                        out_n[j] = 0;
                     """
                 
                 elif symmetry == 'D6' :
@@ -241,50 +231,24 @@ class Mapping(Tomograms):
                      
                     j = r * chunk_size_i + i - W_offset;
                     
-                    // 2 x pi rotations about x-axis
-                    for (int k=0; k<2; k++) {
-                        coord.y = -coord.y ;
-                        coord.z = -coord.z ;
-                    
-                    // 6 x pi / 3 rotations about z-axis
-                    for (i=0; i<6; i++) {
-                        x = coord.x ;
-                        y = coord.y ;
-                        coord.x = x * c - y * s;
-                        coord.y = x * s + y * c;
-                        
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
+                    // 3 x pi / 3 rotations about z-axis
+                    // the rest are done after merging
+                    if (length(coord) <= (float)(M/2 - 1)) {
+                        for (i=0; i<3; i++) {
+                            x = coord.x ;
+                            y = coord.y ;
+                            coord.x = x * c - y * s;
+                            coord.y = x * s + y * c;
                             
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 - coord.x) * M * M + convert_int_rte(i0 - coord.y) * M + convert_int_rte(i0 - coord.z);
-                    }}
-                    """
-                    stest = """
-                    float c = 0.5;
-                    float s = 0.8660254037844386;
-                    float x, y, z;
-                     
-                    j = r * chunk_size_i + i - W_offset;
-                    
-                    // 2 x pi rotations about z-axis
-                    for (int k=0; k<2; k++) {
-                        coord.x = -coord.x ;
-                        coord.y = -coord.y ;
-                    
-                    // 6 x pi / 3 rotations about x-axis
-                    for (i=0; i<6; i++) {
-                        z = coord.z ;
-                        y = coord.y ;
-                        coord.y = y * c - z * s;
-                        coord.z = y * s + z * c;
-                        
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
-                            
-                        j += W_offset;
-                        out_n[j] = convert_int_rte(i0 - coord.x) * M * M + convert_int_rte(i0 - coord.y) * M + convert_int_rte(i0 - coord.z);
-                    }}
+                            j += W_offset;
+                            out_n[j] = convert_int_rte(i0 + coord.x) * M * M + convert_int_rte(i0 + coord.y) * M + convert_int_rte(i0 + coord.z);
+                        }
+                    } else {
+                        for (i=0; i<3; i++) {
+                            j += W_offset;
+                            out_n[j] = 0;
+                        }
+                    }
                     """
                 
                 self.code[(d, symmetry)] = cl.Program(
@@ -302,7 +266,9 @@ class Mapping(Tomograms):
                 self.n_cl.shape[1] != shape[1]:
             #print('allocating gpu array:', shape, shape[0]*shape[1]*4/1024**2, 'mb')
             self.n_cl = cl.array.empty(self.queue, shape, dtype = self.dtype)
-            self.n    = np.empty(shape, dtype = self.dtype)
+            
+            if self.cpu :
+                self.n    = np.empty(shape, dtype = self.dtype)
     
     def __getitem__(self, key):
         """
@@ -324,12 +290,23 @@ class Mapping(Tomograms):
         shape = list(shape)
         shape[0] = self.order[c] * shape[0]
         shape = tuple(shape)
+
+        # set active queue 
+        self.active_queue      = (self.active_queue + 1) % len(self.queues)
+        self.queue             = self.queues[self.active_queue]
+        self.n_cl              = None
+        self.qxy               = self.qxy_q[self.active_queue]
+        self.rotation_matrices = self.rotation_matrices_q[self.active_queue]
         
         self.make_buffer(shape, c)
         
         self.n_cl = self.calculate_mapping(c, r_start, r_stop, pixel_start, pixel_stop)
-        cl.enqueue_copy(self.queue, self.n[:shape[0]], self.n_cl.data)
-        return self.n[:shape[0]].reshape(self.order[c], r_stop-r_start, pixel_stop-pixel_start)
+        
+        if self.cpu :
+            cl.enqueue_copy(self.queue, self.n[:shape[0]], self.n_cl.data)
+            return self.n[:shape[0]].reshape(self.order[c], r_stop-r_start, pixel_stop-pixel_start)
+        else :
+            return self.n_cl
     
     # replace calculate tomograms
     def calculate_mapping(self, c, r0, r1, i0, i1):
@@ -345,11 +322,11 @@ class Mapping(Tomograms):
         dr = r1-r0 
         W_offset           = np.int32(dr * (i1-i0))
         orientation_offset = np.int32(self.orientation_r[r0])
-
+        
         if d == 2 and ro == 0 :
             code = self.code[d, self.symmetry[c]]
             
-            code.mapping_nearest_static_v0(self.queue, (i1-i0,), None,
+            self.event = code.mapping_nearest_static_v0(self.queue, (i1-i0,), None,
                     self.n_cl.data,
                     self.qxy[q][0].data, 
                     self.qxy[q][1].data, 
@@ -362,7 +339,7 @@ class Mapping(Tomograms):
         elif d == 2 and ro > 0 :
             code = self.code[d, self.symmetry[c]]
             
-            code.mapping_nearest_2D_v0(self.queue, (r1-r0, i1-i0), None,
+            self.event = code.mapping_nearest_2D_v0(self.queue, (r1-r0, i1-i0), None,
                     self.n_cl.data,
                     self.rotation_matrices[(d, ro)].data,
                     self.qxy[q][0].data, 
@@ -377,7 +354,7 @@ class Mapping(Tomograms):
         elif d == 3 and ro > 0 :
             code = self.code[d, self.symmetry[c]]
             
-            code.mapping_nearest_3D_v0(self.queue, (r1-r0, i1-i0), None,
+            self.event = code.mapping_nearest_3D_v0(self.queue, (r1-r0, i1-i0), None,
                     self.n_cl.data,
                     self.rotation_matrices[(d, ro)].data,
                     self.qxy[q][0].data, 

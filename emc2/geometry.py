@@ -29,6 +29,13 @@ def geometry(**config):
             pixel_area = f[key][()]
         else :
             pixel_area = dx * dy
+
+    k = 'xy_offset'
+    if k in config and config[k] :
+        xyz[0] += config[k][0]
+        xyz[1] += config[k][1]
+        print(f'apply xy offset to cxi geometry of {config[k]} m')
+        
     
     # calculate pixel radius
     r = np.sum(xyz**2, axis=0)**0.5

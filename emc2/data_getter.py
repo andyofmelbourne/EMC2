@@ -7,14 +7,13 @@ import os
 import pickle
 import pathlib
 import math
+import psutil
 
 from . import utils_cl
 from . import utils
 
-from mpi4py import MPI
-comm = MPI.COMM_WORLD
-rank = comm.Get_rank()
-size = comm.Get_size()
+
+rank = 0
 
 def _split_frame(frame, photons, N):
     """
@@ -116,6 +115,7 @@ class Data_getter():
         fnam_append  = '-sparse.h5',
         mpi_split_frames = False, 
         working_directory = './',
+        load_dense = True,
         **kwargs
     ):
         self.fnam = cxi_file
@@ -127,7 +127,6 @@ class Data_getter():
                 if not os.path.exists(cachedir) and rank == 0 :
                     os.mkdir(cachedir)
                 self.cachedir = cachedir
-            comm.barrier()
             
             stem         = pathlib.Path(cxi_file).stem
             self.dataset = dataset
@@ -149,6 +148,8 @@ class Data_getter():
         if self.frame_model == 'background' and self.split_frames :
             err = "frame_model = 'background' is incompatible with split_frames = True"
             raise ValueError(err)
+
+        print(f'{frame_model=} {self.frame_model=} {self.frame_model == "background"}')
         
         # background
         self.background_dataset          = background_dataset         
@@ -157,14 +158,15 @@ class Data_getter():
         
         # check if the filter or mask has changed
         if self.sparse_file == True : 
+            print(f'checking existing sparse file...', end= ' ')
             self.sparse_file = self.check_sparse()
+            print(self.sparse_file)
         
         if not self.sparse_file and rank == 0 :   
             # make sure this only done once 
             # by the first rank
             self.save_sparse() 
          
-        comm.barrier()
         self.sparse_file = True
         
         if not self.loaded and mpi_split_frames:
@@ -177,6 +179,24 @@ class Data_getter():
         self.frame_inds_indices = np.concatenate(([0], np.cumsum(self.litpix)))
         self.frame_indices = np.arange(self.shape[0])
         self.pixel_indices = np.arange(self.pixels)
+
+        # load dense data 
+        # if it takes up less than 20% of available memory
+        self.dense_data = None
+        if load_dense :
+            mem_avail = psutil.virtual_memory().available
+            mem_data  = self.size * np.dtype(self.dtype).itemsize
+            print(f'Available memory {mem_avail/1024**3} gb')
+            print(f'Dense data size  {mem_data/1024**3} gb')
+            if mem_data < (.2 * mem_avail) :
+                print('loading dense dataset')
+                self.dense_data = self[:, :]
+                # still usefull to have these
+                #del self.photons
+                #del self.inds
+                #self.photons = None
+                #self.inds    = None
+            
     
     def save_sparse(self):
         inds    = []
@@ -230,6 +250,7 @@ class Data_getter():
         self.frame_shape = self.mask.shape
         self.pixels      = len(frame)
         self.shape       = (len(self.litpix), self.pixels) 
+        self.size        = len(self.litpix) * self.pixels
         self.frame_index = np.array(frame_index)
             
         for _ in tqdm(range(1), desc = 'saving data in sparse format'):
@@ -303,6 +324,7 @@ class Data_getter():
         self.dtype        = self.photons.dtype
         
         self.shape       = self.litpix.shape + (self.pixels,)
+        self.size        = len(self.litpix) * self.pixels
         self.loaded = True
     
     def load_sparse_parallel(self):
@@ -357,8 +379,17 @@ class Data_getter():
             frames = self.frame_indices[key]
             pixels = self.pixel_indices
         return frames, pixels
-                
-    def __getitem__(self, key):
+    
+    def getitem_dense(self, key):
+        return self.dense_data[key]
+
+    def sparse(self, d):
+        j0, j1 = self.frame_inds_indices[d: d+2]
+        inds   = self.inds[j0: j1]
+        K      = self.photons[j0: j1]
+        return K, inds
+    
+    def getitem_sparse(self, key):
         frames, pixels = self.parse_key(key)
         
         out   = np.zeros((len(frames), len(pixels)), dtype = self.photons.dtype)
@@ -370,12 +401,24 @@ class Data_getter():
             out[i]                   = frame[pixels]
             
         return out
+                
+    def __getitem__(self, key):
+        if self.dense_data is not None :
+            return self.getitem_dense(key)
+        else :
+            return self.getitem_sparse(key)
 
 class Data_getter_background():
     def __init__(self, data_getter):
         self.data_getter = data_getter
         self.shape = data_getter.shape
         self.dtype = data_getter.background.dtype
+
+    def sparse(self, d, pixels):
+        bind   = self.data_getter.background_inds[d]
+        b      = self.data_getter.background_weighting[d]
+        B      = b * self.data_getter.background[bind, pixels]
+        return B
     
     def __getitem__(self, key):
         frames, pixels = self.data_getter.parse_key(key)

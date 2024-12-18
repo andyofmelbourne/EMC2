@@ -8,7 +8,7 @@ import signal
 from pathlib import Path
 import pyqtgraph.exporters
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/3D-EMC/Ery_maxwell/iteration_info.h5'
 #cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
 cxi_file = None
 
@@ -68,9 +68,11 @@ with h5py.File(fnam, 'r') as f:
 
 # now represent occ_dc on a 2D plane
 theta = 2*np.pi*np.arange(occ_dc.shape[1]) / occ_dc.shape[1]
+print(f'{theta=}')
 unit_vectors = np.zeros((occ_dc.shape[1], 2))
 unit_vectors[:, 0] = np.cos(theta)
 unit_vectors[:, 1] = np.sin(theta)
+print(f'{unit_vectors=}')
 
 def get_plots(fnam, iteration):
     k = f'iteration_{iteration}/occupancy_dc'
