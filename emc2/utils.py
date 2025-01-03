@@ -6,6 +6,9 @@ import h5py
 import os
 import shutil
 import sys
+from tqdm import tqdm
+
+import pyopencl as cl
 
 #from mpi4py import MPI
 #comm = MPI.COMM_WORLD
@@ -16,6 +19,247 @@ def clip_scalar(val, vmin, vmax):
     """ convenience function to avoid using np.clip for scalar values 
     cannot take None as an argument"""
     return vmin if val < vmin else vmax if val > vmax else val
+
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait, FIRST_COMPLETED
+
+class ThreadQueue():
+    """
+    useful for memory intensive opencl code utilisizing SVM 
+    as it keeps a reference to input arrays (preventing seg fault)
+    and limits queue depth (preventing memory saturation)
+    """
+    
+    def __init__(self, max_queue_depth = None):
+        self.executor = ThreadPoolExecutor()
+        self.futures  = []
+         
+        if not max_queue_depth :
+            self.max_queue_depth = len(os.sched_getaffinity(0))
+        else :
+            self.max_queue_depth = max_queue_depth
+    
+    def _run(self, fn, *args, **kwargs):
+        event = fn(*args, **kwargs)
+        
+        if hasattr(event, 'result'):
+            event.result()
+        
+        elif hasattr(event, 'wait'):
+            event.wait()
+
+    def submit(self, fn, *args, **kwargs):
+        self.futures.append(self.executor.submit(self._run, fn, *args, **kwargs))
+        
+        # block if the queue is full to prevent large memory usage
+        if len(self.futures) >= self.max_queue_depth :
+            fs_done, fs_not_done = wait(self.futures, return_when = FIRST_COMPLETED)
+            for future in fs_done:
+                e = future.exception()
+                if e is not None :
+                    print(e, file = sys.stderr)
+                self.futures.remove(future)
+
+    def shutdown(self):
+        self.executor.shutdown()
+
+class Solve_axbc_cl():
+    
+    def __init__(self, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 1000, debug = False, queue = None, context = None):
+        
+        self.fill_value = np.float64(fill_value)
+        self.ftol       = np.float64(ftol)
+        self.xtol       = np.float64(xtol)
+        self.maxiters   = np.int64(maxiters)
+        
+        self.cl_code = cl.Program(context, self.code()).build()
+        self.queue   = queue
+        self.flag    = np.empty(1, dtype = np.int64)
+
+        self.debug = debug
+
+        self.flags = {
+            0: f'zero length input returning {fill_value}',
+            1: f'negative c-value returning {fill_value}',
+            2: 'success',
+            3: 'fmax is less than 0 returning 0',
+            4: f'Warning maximum iterations exceeded!',
+            5: 'analytic solution for N=1',
+            6: 'analytic solution for N=2',
+            7: 'all b terms are zero setting x to xmax = sum(a) / c'
+        }
+    
+    def solve(self, a, b, c, out, d):
+        event = self.cl_code.solve(self.queue, (1,), (1,),
+            cl.SVM(a),  
+            cl.SVM(b),  
+            np.float64(c), 
+            cl.SVM(out), 
+            cl.SVM(self.flag), 
+            self.fill_value,
+            self.ftol,
+            self.xtol,
+            self.maxiters,
+            np.int64(a.size),
+            np.int64(d)
+        )
+        
+        if self.debug :
+            self.queue.finish()
+            if out[d] > 10 :
+                print(f'{d=} {out[d]=} {self.flags[self.flag[0]]}')
+            """
+            if self.flag[0] == 4:
+                #print(a)
+                #print(b)
+                #print(c)
+                xmax = 
+                print(np.sum(a) / c)
+                print(np.sum(a/b) - c)
+            """
+            sys.stdout.flush()
+        return event
+    
+    def code(self):
+        return """
+        // optimised for cpu with one worker per group
+        // assume all a >  0 
+        //            b >= 0
+        __kernel void solve (
+            global double *a,  
+            global double *b, 
+            const  double  c, 
+            global double *out, 
+            global int    *flag, 
+            const  double fill_value,
+            const  double ftol,
+            const  double xtol,
+            const  long maxiters,
+            const  long I,
+            const  long d
+        ) {
+
+        double x;
+
+        if (I == 0) {
+            out[d]  = fill_value;
+            flag[0] = 0;          // print(f'zero length input returning {fill_value}')
+            return;
+        }
+            
+        if (c <= 0.) {
+            out[d]  = fill_value;
+            flag[0] = 1;          // print(f'negative c-value {c} returning {fill_value}')
+            return;
+        }
+            
+        if (I == 1) {
+            out[d]  = a[0] / c - b[0];
+            flag[0] = 5;          // 'analytic solution for N=1'
+            return;
+        }
+            
+        if (I == 2) {
+            double ap, bp, cp;
+            ap      = -c; 
+            bp      = a[0] + a[1] - c * (b[0] + b[1]); 
+            cp      = a[0] * b[1] + a[1] * b[0] - c * b[0] * b[1];
+            out[d]  = (-bp - sqrt(pown(bp, 2) - 4. * ap * cp)) / (2. * ap);
+            flag[0] = 6;          // 'analytic solution for N=2'
+            return;
+        }
+            
+        long i, j ;
+        
+        double amax = 0.;
+        double xmin = 0.;
+        double fmax = -1.;
+        double xmax = 0.; // np.sum(a)/c
+        double fmin = 0.; // np.sum(a / (xmax + b)) - c
+        long bzeros = 0;
+        
+        for (i=0; i<I; i++) {
+            xmax += a[i];
+            
+            if (b[i] == 0.) 
+                bzeros += 1;
+            
+            if (a[i]>amax) 
+                amax = a[i];
+        }
+        xmax /= c;
+        
+        for (i=0; i<I; i++) 
+            fmin += a[i] / (xmax + b[i]) ;
+        
+        fmin -= c;
+        
+        if (bzeros == I) {
+            
+            out[d] = xmax;
+            flag[0] = 7;        // 'all b terms are zero setting x to xmax = sum(a) / c'
+            return;
+            
+        } else if (bzeros > 0) {
+            
+            xmin = amax / c ;
+        
+        } else {
+
+            for (i=0; i<I; i++) 
+                fmax += a[i] / b[i] ;
+            fmax -= c;
+            
+            if (fmax <= 0) {
+                flag[0] = 3; // print(f'fmax {fmax} is less than 0 returning 0')
+                out[d]  = 0.;
+                return;
+            }
+        }
+
+        // fmax = fmax or (np.sum(a / (xmin + b)) - c)
+        if (fmax < 0.) {
+            for (i=0; i<I; i++) 
+                fmax += a[i] / (xmin + b[i]) ;
+            fmax -= c;
+        }
+
+        // begin line search
+        x = xmax / 2.;
+
+        double fn, fpn, xb, step;
+        
+        for (i=0; i < maxiters; i++) {
+            // Newton's method 
+            // x_n+1 = x_n - f(x_n) / f'(x_n)
+            fn  = 0.;
+            fpn = 0.;
+            for (j = 0; j < I; j++) {
+                xb   = x + b[j];
+                fn  += a[j] / xb ;
+                fpn += a[j] / pown(xb, 2) ;
+            }
+            fn -= c;
+            fpn = -fpn;
+
+            step = - fn / fpn;
+            x += step;
+            x = clamp(x, xmin, xmax);
+            
+            if ((fabs(step) < (xtol * x)) && (fabs(fn) < (ftol * (fmax-fmin)))) {
+                out[d]  = xmax ;
+                flag[0] = 2;
+                return ;
+            }
+        }
+        
+        out[d]  = x;
+        flag[0] = 4; // print(f'Warning maximum iterations exceeded! {x=} {xmin=} {xmax=} {fmax=} {fn=} {fpn=}') 
+        }
+        """
+            
+            
+            
 
 def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 1000, algorithm = 'Halley', debug = False):
     """
@@ -36,7 +280,7 @@ def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 10
             xmin = 0
     
     solution for I = 1
-        x = a_0 / c - b
+        x = a_0 / c - b_0
     
     solution for I = 2
         f  = a0 / (x + b0) + a1 / (x + b1) - c = 0
@@ -74,13 +318,17 @@ def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 10
     # confirmed c > 0
     
     if I == 1 :
-        return a[0] / c - b[0]
+        x = a[0] / c - b[0]
+        x = clip_scalar(x, 0, np.inf)
+        return x
     
     elif I == 2 :
         ap = -c 
         bp = a[0] + a[1] - c * (b[0] + b[1]) 
         cp = a[0] * b[1] + a[1] * b[0] - c * b[0] * b[1]
         x  = (-bp - (bp**2 - 4 * ap * cp)**0.5) / (2 * ap)
+        x = clip_scalar(x, 0, np.inf)
+        return x
     
     xmin = 0.
     xmax = np.sum(a)/c
@@ -259,7 +507,7 @@ class Geom_corr_masked():
     def apply(self, ar):
         if ar.ndim == 2:
             frames = []
-            for a in ar :
+            for a in tqdm(ar) :
                 self.frame[self.mask] = a
                 frames.append(self.frame.copy())
         else :

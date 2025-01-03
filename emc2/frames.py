@@ -187,8 +187,12 @@ __kernel void PwCKF (
 class Frames():
     
     def __init__(self, B_di, w_d, W_ri, **config):
-        self.queue   = config['queue']
-        self.context = config['context']
+        #self.queue   = config['queue']
+        #self.context = config['context']
+        self.queue   = W_ri.queues[0]
+        self.context = W_ri.context
+
+        W_ri.cpu = False
         
         self.B_di = B_di
         self.W_ri = W_ri
@@ -244,14 +248,14 @@ class Frames():
             self.F_dri = np.empty(size, dtype = self.dtype)
             self.F_cl  = cl.array.empty(self.queue, size, dtype = self.dtype)
         
-        if self.F2_dri is None or self.F2_dri.size < np.prod(shape):
+        if F2 is not None and (self.F2_dri is None or self.F2_dri.size < np.prod(shape)):
             self.F2_dri = np.empty(size, dtype = self.dtype)
             self.F2_cl  = cl.array.empty(self.queue, size, dtype = self.dtype)
         
-        if self.F3_dri is None or self.F3_dri.size < np.prod(shape):
+        if F3 is not None and (self.F3_dri is None or self.F3_dri.size < np.prod(shape)):
             self.F3_dri = np.empty(size, dtype = self.dtype)
             self.F3_cl  = cl.array.empty(self.queue, size, dtype = self.dtype)
-
+        
         # see if we need to update B
         if self.B_cl is None or not self.last_key or key[0] != self.last_key[0] or key[2] != self.last_key[2] :
             B_di      = self.B_di[key[0], key[2]]

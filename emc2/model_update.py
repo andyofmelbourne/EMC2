@@ -51,6 +51,7 @@ from tqdm import tqdm
 from emc2 import utils 
 from emc2 import utils_cl
 from emc2 import mapping
+from emc2 import symmetry
 from concurrent.futures import ThreadPoolExecutor
 import time
 
@@ -58,65 +59,6 @@ import pyopencl as cl
 import pyopencl.array 
 import pyclblast
 
-def apply_symmetry_2D(ar, symmetry, i0):
-    x, y = np.indices(ar.shape)
-    x -= i0
-    y -= i0
-    if symmetry in ['D6', 'inversion'] :
-        x2, y2 = -x + i0, -y + i0
-        m  = (x2 >= 0) * (x2 < ar.shape[0]) 
-        m *= (y2 >= 0) * (y2 < ar.shape[1]) 
-        ar[m] += ar[x2[m], y2[m]]
-    return ar
-
-def apply_symmetry_3D(ar, symmetry, i0):
-    x, y, z = np.indices(ar.shape)
-    x -= i0
-    y -= i0
-    z -= i0
-    # 2-fold axis about z: x -> -x, y -> -y
-    if symmetry in ['D6'] :
-        x2, y2, z2 = -x + i0, -y + i0, z + i0
-        m  = (x2 >= 0) * (x2 < ar.shape[0]) 
-        m *= (y2 >= 0) * (y2 < ar.shape[1]) 
-        m *= (z2 >= 0) * (z2 < ar.shape[2]) 
-        ar[m] += ar[x2[m], y2[m], z2[m]]
-
-    # 2-fold axis about x: y -> -y, z -> -z
-    if symmetry in ['D6'] :
-        x2, y2, z2 = x + i0, -y + i0, -z + i0
-        m  = (x2 >= 0) * (x2 < ar.shape[0]) 
-        m *= (y2 >= 0) * (y2 < ar.shape[1]) 
-        m *= (z2 >= 0) * (z2 < ar.shape[2]) 
-        ar[m] += ar[x2[m], y2[m], z2[m]]
-    
-    if symmetry in ['D6', 'inversion'] :
-        x2, y2, z2 = -x + i0, -y + i0, -z + i0
-        m  = (x2 >= 0) * (x2 < ar.shape[0]) 
-        m *= (y2 >= 0) * (y2 < ar.shape[1]) 
-        m *= (z2 >= 0) * (z2 < ar.shape[2]) 
-        ar[m] += ar[x2[m], y2[m], z2[m]]
-    
-    return ar
-    
-
-def apply_symmetry(ar, symmetry, i0):
-    """
-    here just apply the symmetry axes
-    that exactly map pixels to pixels 
-    the rest are done in M_ri
-    """
-    if symmetry == 'P1':
-        return ar
-    
-    if ar.ndim == 2 :
-        ar = apply_symmetry_2D(ar, symmetry, i0)
-    elif ar.ndim == 3 :
-        ar = apply_symmetry_3D(ar, symmetry, i0)
-    else :
-        raise ValueError(f'dimension {ar.ndim} not supported')
-    
-    return ar
 
 class dummy_event():
     def wait():
@@ -324,8 +266,8 @@ def calc_I(K_di, P_dr, wsums_r, models_I, **config):
             executor.shutdown()
         
         # apply symmetry
-        Ic = apply_symmetry(Ic.reshape(models_I.I[c].shape), M_ri.symmetry[c], int(models_I.i0))
-        Oc = apply_symmetry(Oc.reshape(models_I.I[c].shape), M_ri.symmetry[c], int(models_I.i0))
+        Ic = symmetry.apply_symmetry(Ic.reshape(models_I.I[c].shape), M_ri.symmetry[c], int(models_I.i0))
+        Oc = symmetry.apply_symmetry(Oc.reshape(models_I.I[c].shape), M_ri.symmetry[c], int(models_I.i0))
         
         Oc[Oc==0] = 1
         Ic /= Oc

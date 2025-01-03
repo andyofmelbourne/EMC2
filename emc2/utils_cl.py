@@ -34,9 +34,9 @@ def opencl_init():
     queues  = [cl.CommandQueue(context, device) for device in devices]
     # for testing
     queues  = queues + [cl.CommandQueue(context, device) for device in devices]
-    return {'context': context, 'queues': queues}
+    return {'context': context, 'queues': queues, 'devices': devices}
 
-def opencl_init_cpu(rank):
+def opencl_init_cpu(rank = 0):
     # find an opencl device (preferably a GPU) in one of the available platforms
     done = False
     for p in cl.get_platforms():
@@ -49,6 +49,7 @@ def opencl_init_cpu(rank):
     sys.stdout.flush()
     
     context = cl.Context(devices)
+    #queue   = cl.CommandQueue(context, properties = cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
     queue   = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
     
@@ -112,3 +113,6 @@ def to_gpu_3D_image(ar, queue = None, context = None):
     I_cl         = cl.Image(context, flags, image_format, shape=ar.shape[::-1])
     cl.enqueue_copy(queue, I_cl, np.ascontiguousarray(ar.T.astype(np.float32)), is_blocking=True, origin=(0, 0, 0), region=ar.shape[::-1])
     return I_cl
+
+
+

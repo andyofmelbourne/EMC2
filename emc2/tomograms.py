@@ -15,6 +15,7 @@ W_ri = I[class, R . q]
 
 """
 import numpy as np
+import sys
 
 import pyopencl as cl
 import pyopencl.array 
@@ -161,13 +162,13 @@ code = """
             global float *qy, 
             const float i0,
             const float dq,
-            const int rotation_offset,
+            global int *ro,
             const int pixel_offset,
             const int W_offset)
         {{
             int r        = get_global_id(0);
             int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
+            int rotation = ro[r];
             int pixel    = pixel_offset    + i;
              
             int chunk_size_i = get_global_size(1);
@@ -231,13 +232,13 @@ code = """
             global float *qz, 
             const float i0,
             const float dq,
-            const int rotation_offset,
+            global int *ro,
             const int pixel_offset,
             const int W_offset)
         {{
             int r        = get_global_id(0);
             int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
+            int rotation = ro[r];
             int pixel    = pixel_offset    + i;
              
             int chunk_size_i = get_global_size(1);
@@ -295,7 +296,7 @@ class Tomograms():
     def __init__(self, models_I, cpu = False, **config):
         queues  = config['queues']
         context = config['context']
-
+        self.config = config
         
         # rotation matrices
         # -----------------
@@ -320,7 +321,8 @@ class Tomograms():
         
         ##########
         self.rotations = 1 # hack
-        self.update_mask(np.ones(config['pixels'], dtype = bool), **config)
+        self.pixel_indices  = np.arange(config['pixels'])
+        self.update_mask(np.ones(config['pixels'], dtype = bool), config)
         ##########
 
         # ------------------------------------------------------
@@ -407,12 +409,11 @@ class Tomograms():
         else :
             self.cl_code = self.cl_code_normal
     
-    def update_mask(self, new_mask, **config):
+    def update_mask(self, pixels, config):
         queues = config['queues']
         
-        pixels = np.sum(new_mask)
-        self.pixels = pixels
-        self.pixel_indices = np.arange(self.pixels)
+        self.pixels         = len(pixels)
+        self.pixel_indices0 = pixels.copy()
         self.shape = (self.rotations, self.pixels)
         
         # per pixel q values
@@ -436,19 +437,18 @@ class Tomograms():
                     self.xy_offset.append( [n * step, m * step] ) 
                     for qi, queue in enumerate(queues):
                         self.qxy_q[qi].append((
-                            to_gpu(q[0][new_mask], queue = queue),
-                            to_gpu(q[1][new_mask], queue = queue),
-                            to_gpu(q[2][new_mask], queue = queue),
+                            to_gpu(q[0][pixels], queue = queue),
+                            to_gpu(q[1][pixels], queue = queue),
+                            to_gpu(q[2][pixels], queue = queue),
                         ))
         else :
             self.xy_offset.append( [0, 0] ) 
             for qi, queue in enumerate(queues):
                 self.qxy_q[qi].append((
-                    to_gpu(config['q'][0][new_mask], queue = queue),
-                    to_gpu(config['q'][1][new_mask], queue = queue),
-                    to_gpu(config['q'][2][new_mask], queue = queue),
+                    to_gpu(config['q'][0][pixels], queue = queue),
+                    to_gpu(config['q'][1][pixels], queue = queue),
+                    to_gpu(config['q'][2][pixels], queue = queue),
                 ))
-        
     
     def compile(self):
         # compile code twice
@@ -470,18 +470,18 @@ class Tomograms():
         assert(isinstance(key, tuple))
         assert(len(key) == 2)
          
-        r0 = np.int32(self.r_indices[key[0]][0])
-        r1 = np.int32(1+self.r_indices[key[0]][-1])
+        rs     = self.r_indices[key[0]]
+        pixels = self.pixel_indices[key[1]]
         
-        i0 = np.int32(self.pixel_indices[key[1]][0])
-        i1  = np.int32(1+self.pixel_indices[key[1]][-1])
+        if pixels.shape != self.pixel_indices0.shape or not np.allclose(pixels, self.pixel_indices0):
+            self.update_mask(pixels, self.config)
         
-        shape = (r1 - r0, i1 - i0)
+        shape = (len(rs), len(pixels))
         
         # because I use int32 for indexing 
         assert((shape[0] * shape[1]) < (2**31-1))
         
-        return r0, r1, i0, i1, shape
+        return rs, pixels, shape
 
     def make_buffer(self, shape):
         # we need a new cl buffer if the pixels change
@@ -500,8 +500,8 @@ class Tomograms():
         only suports slicing:
             self[10:20, 100:20]
         """
-        r_start, r_stop, pixel_start, pixel_stop, shape = self.parse_key(key)
-        
+        rs, pixels, shape = self.parse_key(key)
+
         # set active queue 
         self.active_queue      = (self.active_queue + 1) % len(self.queues)
         self.queue             = self.queues[self.active_queue]
@@ -515,46 +515,57 @@ class Tomograms():
         # making a new buffer each time seems to help with threading
         #self.W_cl_q[self.active_queue] = self.W_cl
         
-        self.W_cl, self.event = self.calculate_tomograms(r_start, r_stop, pixel_start, pixel_stop)
+        self.W_cl, self.event = self.calculate_tomograms(rs, pixels)
         
         if self.cpu :
-            cl.enqueue_copy(self.queue, self.W[:(r_stop-r_start)], self.W_cl.data)
-            return self.W[:(r_stop-r_start)]
+            cl.enqueue_copy(self.queue, self.W[:shape[0]], self.W_cl.data)
+            return self.W[:shape[0]]
         else :
             return self.W_cl
             
-    def calculate_tomograms(self, r0, r1, i0, i1):
+    def calculate_tomograms(self, rs0, pixels):
         """
         we should evaluate in chunks or r
         such that the q-values and classes do not change
         """
         # these are the indices of r where class or q has a new value
         #self.changes = 1 + np.where(np.diff(self.q_indices) + np.diff(self.class_indices))[0]
+
+        rs_out = []
         
-        rs = utils.get_chunks(r0, r1, self.changes)
-        W_offset = 0
+        # rs0 is the list of r indices, not neccessarily continuous
+        rs = utils.get_chunks(rs0[0], rs0[-1]+1, self.changes)
+        
+        W_offset = np.int32(0)
         for r00, r11 in rs :
+            rs_chunk = np.ascontiguousarray(rs0[ (rs0 >= r00) * (rs0 < r11) ].astype(np.int32))
+             
+            if len(rs_chunk) == 0 :
+                continue
+            
             c  = self.class_r[r00]
             q  = self.q_r[r00]
             d  = self.dimensions[c]
             ro = self.rotation_orders[c]
-            dr = r00-r0 
-            W_offset           = np.int32(dr * (i1-i0))
-            orientation_offset = np.int32(self.orientation_r[r00])
+            dr = len(rs_chunk)
+            #orientation_offset = np.int32(self.orientation_r[r00])
+            #W_offset           = np.int32(dr * len(pixels))
+            orientation_r    = self.orientation_r[rs_chunk]
+            orientation_r_cl = to_gpu(orientation_r, queue = self.queue)
             
             if d == 2 and ro == 0 :
-                event = self.cl_code.calculate_tomograms_static_v0(self.queue, (i1-i0,), None,
+                event = self.cl_code.calculate_tomograms_static_v0(self.queue, (len(pixels),), None,
                         self.W_cl.data,
                         self.models[c], 
                         self.qxy[q][0].data, 
                         self.qxy[q][1].data, 
                         self.i0, 
                         self.dq,
-                        np.int32(i0),
+                        np.int32(0),
                         W_offset)
             
             elif d == 2 and ro > 0 :
-                event = self.cl_code.calculate_tomograms_2D_v0(self.queue, (r11-r00, i1-i0), None,
+                event = self.cl_code.calculate_tomograms_2D_v0(self.queue, (dr, len(pixels)), None,
                         self.W_cl.data,
                         self.models[c], 
                         self.rotation_matrices[(d, ro)].data,
@@ -562,12 +573,12 @@ class Tomograms():
                         self.qxy[q][1].data, 
                         self.i0, 
                         self.dq,
-                        orientation_offset,
-                        np.int32(i0),
+                        orientation_r_cl.data,
+                        np.int32(0),
                         W_offset)
              
             elif d == 3 and ro > 0 :
-                event = self.cl_code.calculate_tomograms_3D_v0(self.queue, (r11-r00, i1-i0), None,
+                event = self.cl_code.calculate_tomograms_3D_v0(self.queue, (dr, len(pixels)), None,
                         self.W_cl.data,
                         self.models[c], 
                         self.rotation_matrices[(d, ro)].data,
@@ -576,7 +587,14 @@ class Tomograms():
                         self.qxy[q][2].data, 
                         self.i0, 
                         self.dq,
-                        orientation_offset,
-                        np.int32(i0),
+                        orientation_r_cl.data,
+                        np.int32(0),
                         W_offset)
+            
+            rs_out.append(rs_chunk.copy())
+            W_offset += np.int32(dr * len(pixels))
+
+        #assert(np.allclose(np.concatenate(rs_out).ravel(), rs0))
+        #print(W_offset, len(rs0), len(pixels), len(rs0) * len(pixels), file = sys.stderr)
+        #assert(W_offset == (len(rs0) * len(pixels)))
         return self.W_cl, event

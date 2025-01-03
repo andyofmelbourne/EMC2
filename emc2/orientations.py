@@ -8,7 +8,6 @@ quiet = True
 # perhaps opencl image has each pixel coordinate at 0.5, 1.5 ... (N-1) + 0.5
 # yes thats it # the coordinates are also transposed
 
-
 def calculate_rotation_matrices(Mrot, M_in_plane, M_sphere, queue, context):
     cl_code = cl.Program(context, r"""
         // R = Rz(theta).dot(Ry(phi).dot(Rz(phi2)))
@@ -30,7 +29,7 @@ def calculate_rotation_matrices(Mrot, M_in_plane, M_sphere, queue, context):
         float phi_2 = 2. * M_PI * j / M_in_plane; 
         float goldenRatio = (1. + sqrt(5.)) / 2.;
         float theta = 2. * M_PI * i / goldenRatio;
-
+        
         float Rl[9];
         
         Rl[0] = -sin(phi_2) * sin(theta) + cos(phi) * cos(phi_2) * cos(theta) ;

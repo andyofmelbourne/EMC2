@@ -2,6 +2,9 @@ import numpy as np
 
 from .tomograms import Tomograms
 
+from .utils_cl import to_gpu
+from . import utils
+
 import pyopencl as cl
 import pyopencl.array 
 
@@ -15,13 +18,13 @@ code_3D = """
             const int M,
             const float i0,
             const float dq,
-            const int rotation_offset,
+            global int *ro,
             const int pixel_offset,
             const int W_offset)
         {{
             int r        = get_global_id(0);
             int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
+            int rotation = ro[r];
             int pixel    = pixel_offset    + i;
              
             int chunk_size_i = get_global_size(1);
@@ -86,13 +89,13 @@ code_2D = """
             const int M,
             const float i0,
             const float dq,
-            const int rotation_offset,
+            global int *ro,
             const int pixel_offset,
             const int W_offset)
         {{
             int r        = get_global_id(0);
             int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
+            int rotation = ro[r];
             int pixel    = pixel_offset    + i;
              
             int chunk_size_i = get_global_size(1);
@@ -277,14 +280,14 @@ class Mapping(Tomograms):
         only suports slicing:
             self[10:20, 100:20]
         """
-        r_start, r_stop, pixel_start, pixel_stop, shape = self.parse_key(key)
+        rs, pixels, shape = self.parse_key(key)
         
         # only allow calling over r-range with a single class
         # and no other changes (such as q)
-        c = self.class_r[r_start]
+        c = self.class_r[rs[0]]
         #print(self.class_r[r_start: r_stop-1])
         #print(self.q_r[r_start: r_stop-1])
-        assert(np.all(self.change_state[r_start: r_stop-1] == 0))
+        #assert(np.all(self.change_state[r_start: r_stop-1] == 0))
         
         # add symmetry to shape
         shape = list(shape)
@@ -292,7 +295,9 @@ class Mapping(Tomograms):
         shape = tuple(shape)
 
         # set active queue 
-        self.active_queue      = (self.active_queue + 1) % len(self.queues)
+        #self.active_queue      = (self.active_queue + 1) % len(self.queues)
+        # test
+        self.active_queue      = 0
         self.queue             = self.queues[self.active_queue]
         self.n_cl              = None
         self.qxy               = self.qxy_q[self.active_queue]
@@ -300,72 +305,92 @@ class Mapping(Tomograms):
         
         self.make_buffer(shape, c)
         
-        self.n_cl = self.calculate_mapping(c, r_start, r_stop, pixel_start, pixel_stop)
+        self.n_cl = self.calculate_mapping(rs, pixels)
         
         if self.cpu :
             cl.enqueue_copy(self.queue, self.n[:shape[0]], self.n_cl.data)
-            return self.n[:shape[0]].reshape(self.order[c], r_stop-r_start, pixel_stop-pixel_start)
+            return self.n[:shape[0]].reshape(self.order[c], -1, shape[1])
+            #return self.n[:shape[0]].reshape(shape)
         else :
             return self.n_cl
     
     # replace calculate tomograms
-    def calculate_mapping(self, c, r0, r1, i0, i1):
+    def calculate_mapping(self, rs0, pixels):
         """
         we should evaluate in chunks or r
         such that the q-values and classes do not change
         """
-        # no changes are allowed in r range
-        c  = self.class_r[r0]
-        q  = self.q_r[r0]
-        d  = self.dimensions[c]
-        ro = self.rotation_orders[c]
-        dr = r1-r0 
-        W_offset           = np.int32(dr * (i1-i0))
-        orientation_offset = np.int32(self.orientation_r[r0])
+        # this will interleave symmetry and changes to qxy
         
-        if d == 2 and ro == 0 :
-            code = self.code[d, self.symmetry[c]]
-            
-            self.event = code.mapping_nearest_static_v0(self.queue, (i1-i0,), None,
-                    self.n_cl.data,
-                    self.qxy[q][0].data, 
-                    self.qxy[q][1].data, 
-                    self.M,
-                    self.i0, 
-                    self.dq,
-                    np.int32(i0),
-                    W_offset)
+        rs_out = []
+        rs = utils.get_chunks(rs0[0], rs0[-1]+1, self.changes)
         
-        elif d == 2 and ro > 0 :
-            code = self.code[d, self.symmetry[c]]
+        # coordinate offset for symmetry
+        W_offset = np.int32(len(rs0) * len(pixels))
             
-            self.event = code.mapping_nearest_2D_v0(self.queue, (r1-r0, i1-i0), None,
-                    self.n_cl.data,
-                    self.rotation_matrices[(d, ro)].data,
-                    self.qxy[q][0].data, 
-                    self.qxy[q][1].data, 
-                    self.M,
-                    self.i0, 
-                    self.dq,
-                    orientation_offset,
-                    np.int32(i0),
-                    W_offset)
-         
-        elif d == 3 and ro > 0 :
-            code = self.code[d, self.symmetry[c]]
+        # coordinate offset for r
+        M_offset = np.int32(0)
+        for r00, r11 in rs :
+            rs_chunk = np.ascontiguousarray(rs0[ (rs0 >= r00) * (rs0 < r11) ].astype(np.int32))
             
-            self.event = code.mapping_nearest_3D_v0(self.queue, (r1-r0, i1-i0), None,
-                    self.n_cl.data,
-                    self.rotation_matrices[(d, ro)].data,
-                    self.qxy[q][0].data, 
-                    self.qxy[q][1].data, 
-                    self.qxy[q][2].data, 
-                    self.M,
-                    self.i0, 
-                    self.dq,
-                    orientation_offset,
-                    np.int32(i0),
-                    W_offset)
+            if len(rs_chunk) == 0 :
+                continue
+            
+            c  = self.class_r[r00]
+            q  = self.q_r[r00]
+            d  = self.dimensions[c]
+            ro = self.rotation_orders[c]
+            dr = len(rs_chunk)
+            #orientation_offset = np.int32(self.orientation_r[r00])
+            #W_offset           = np.int32(dr * len(pixels))
+            orientation_r    = self.orientation_r[rs_chunk]
+            orientation_r_cl = to_gpu(orientation_r, queue = self.queue)
+            
+            if d == 2 and ro == 0 :
+                code = self.code[d, self.symmetry[c]]
+                
+                self.event = code.mapping_nearest_static_v0(self.queue, (len(pixels),), None,
+                        self.n_cl.data,
+                        self.qxy[q][0].data, 
+                        self.qxy[q][1].data, 
+                        self.M,
+                        self.i0, 
+                        self.dq,
+                        M_offset,
+                        W_offset)
+            
+            elif d == 2 and ro > 0 :
+                code = self.code[d, self.symmetry[c]]
+                
+                self.event = code.mapping_nearest_2D_v0(self.queue, (dr, len(pixels)), None,
+                        self.n_cl.data,
+                        self.rotation_matrices[(d, ro)].data,
+                        self.qxy[q][0].data, 
+                        self.qxy[q][1].data, 
+                        self.M,
+                        self.i0, 
+                        self.dq,
+                        orientation_r_cl.data,
+                        np.int32(M_offset),
+                        W_offset)
+             
+            elif d == 3 and ro > 0 :
+                code = self.code[d, self.symmetry[c]]
+                
+                self.event = code.mapping_nearest_3D_v0(self.queue, (dr, len(pixels)), None,
+                        self.n_cl.data,
+                        self.rotation_matrices[(d, ro)].data,
+                        self.qxy[q][0].data, 
+                        self.qxy[q][1].data, 
+                        self.qxy[q][2].data, 
+                        self.M,
+                        self.i0, 
+                        self.dq,
+                        orientation_r_cl.data,
+                        np.int32(M_offset),
+                        W_offset)
+            
+            M_offset += np.int32(dr * len(pixels))
         
         return self.n_cl
 

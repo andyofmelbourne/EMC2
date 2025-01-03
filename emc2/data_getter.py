@@ -229,6 +229,7 @@ class Data_getter():
         if self.frame_model == 'background':
             background_inds = []
             background_weighting = []
+            background_sums = []
             with h5py.File(self.fnam, 'r') as f:
                 binds = f[self.background_inds_dataset]
                 bw    = f[self.background_weights_dataset]
@@ -237,11 +238,13 @@ class Data_getter():
                 for d in tqdm(frames, desc = 'extracting background information'):
                     background_inds.append(binds[d])
                     background_weighting.append(bw[d])
-
+                
                 self.background = np.ascontiguousarray(back[()][:, self.mask].astype(np.float32))
             
             self.background_inds      = np.array(background_inds)
             self.background_weighting = np.array(background_weighting)
+            background_sums           = np.sum(self.background, axis=-1)
+            self.background_sums      = self.background_weighting * background_sums[self.background_inds]
     
         self.photons     = np.concatenate(photons)
         self.litpix      = np.array(litpix)
@@ -271,6 +274,7 @@ class Data_getter():
                     out['background']           = self.background
                     out['background_inds']      = self.background_inds
                     out['background_weighting'] = self.background_weighting
+                    out['background_sums']      = self.background_sums
         
         if self.split_frames :
             print(f'split {split_count} into {self.shape[0] - len(frames)} frames')
@@ -314,10 +318,14 @@ class Data_getter():
                 self.photon_sums = f['photon_sums'][()]
                 
                 if self.frame_model == 'background':
-                    self.background           = f['background'][()]
+                    # https://github.com/mpi4py/mpi4py/issues/177
+                    # I don't know why sometimes datasets are read with
+                    # dtype = dtype('<f4')
+                    self.background           = f['background'][()].newbyteorder('=')
                     self.background_inds      = f['background_inds'][()]
                     self.background_weighting = f['background_weighting'][()]
-        
+                    self.background_sums      = f['background_sums'][()]
+
         self.d_start_mpi  = 0
         self.d_stop_mpi   = len(self.litpix)
         self.total_frames = len(self.litpix)
@@ -413,6 +421,7 @@ class Data_getter_background():
         self.data_getter = data_getter
         self.shape = data_getter.shape
         self.dtype = data_getter.background.dtype
+        self.background_sums = data_getter.background_sums
 
     def sparse(self, d, pixels):
         bind   = self.data_getter.background_inds[d]
