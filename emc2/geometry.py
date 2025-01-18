@@ -65,13 +65,13 @@ def geometry(**config):
     if k in config and config[k] :
         M = M - 2 * config[k]
     
-    if config['q_max'] :
+    if 'q_max' in config and config['q_max'] :
         q_max = config['q_max']
     
-    elif config['res_max'] :
+    elif 'res_max' in config and config['res_max'] :
         q_max = 1 / config['res_max']
     
-    elif config['pixel_radius'] :
+    elif 'pixel_radius' in config and config['pixel_radius'] :
         rp    = config['pixel_radius']
         z     = xyz[2].ravel()[0]
         r     = (rp**2 + z**2)**0.5
@@ -107,7 +107,7 @@ def geometry(**config):
         else :
             q_max_model = q_max 
 
-        print(f'{q_max=} {q_max_model=} {config[k]=}')
+        print(f'{q_max=} {q_max_model=}')
 
     else :
         raise ValueError('need "model_length" to define model voxel size')

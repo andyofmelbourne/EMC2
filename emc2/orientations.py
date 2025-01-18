@@ -8,6 +8,23 @@ quiet = True
 # perhaps opencl image has each pixel coordinate at 0.5, 1.5 ... (N-1) + 0.5
 # yes thats it # the coordinates are also transposed
 
+def get_rotation_matrices(queue = None, context = None, rotation_order = 10, dimensions = 3):
+    if dimensions == 3 and rotation_order > 0 :
+        R_cl = get_rotations_3D(rotation_order, queue, context)
+    
+    elif dimensions == 2 and rotation_order > 0 :
+        R_cl = get_rotations_2D(rotation_order, queue, context)
+    
+    elif dimensions == 2 and rotation_order == 0 :
+        R_cl = cl.array.empty(queue, (1, 2, 2), dtype = np.float32)
+        R = np.array([[[1, 0], [0, 1]]], dtype = np.float32)
+        cl.enqueue_copy(queue, R_cl.data, R)
+    
+    else :
+        raise ValueError(f'could not reconsile dimension {dimensions} and rotation_order {rotation_order}')
+    
+    return R_cl
+
 def calculate_rotation_matrices(Mrot, M_in_plane, M_sphere, queue, context):
     cl_code = cl.Program(context, r"""
         // R = Rz(theta).dot(Ry(phi).dot(Rz(phi2)))
@@ -80,7 +97,7 @@ def calculate_rotation_matrices(Mrot, M_in_plane, M_sphere, queue, context):
     
     # pre-calculate rotations
     # -----------------------
-    R_cl  = cl.array.empty(queue, (Mrot, 9), dtype = np.float32)
+    R_cl  = cl.array.empty(queue, (Mrot, 3, 3), dtype = np.float32)
     for t in tqdm.tqdm(range(1), desc='pre-calculating rotation matrices', disable = quiet):
         cl_code.calculate_rotation_matrix(queue, (Mrot,), None, R_cl.data, np.int32(M_in_plane), np.int32(M_sphere))
     
@@ -112,7 +129,7 @@ def calculate_rotation_matrices_2D(Mrot, queue, context):
     
     # pre-calculate rotations
     # -----------------------
-    R_cl  = cl.array.empty(queue, (Mrot, 4), dtype = np.float32)
+    R_cl  = cl.array.empty(queue, (Mrot, 2, 2), dtype = np.float32)
     for t in tqdm.tqdm(range(1), desc='pre-calculating rotation matrices', disable = quiet):
         cl_code.calculate_rotation_matrix(queue, (Mrot,), None, R_cl.data, np.int32(Mrot))
     

@@ -310,7 +310,7 @@ class Tomograms():
         
         self.rotation_matrices_q = len(queues) * [{}]
         for q, queue in enumerate(queues):
-            for (d, r) in set(dr):
+            for (d, r) in dr:
                 self.rotation_matrices_q[q][(d, r)] = get_rotation_matrices(
                     queue   = queue, 
                     context = context, 

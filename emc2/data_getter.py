@@ -12,9 +12,6 @@ import psutil
 from . import utils_cl
 from . import utils
 
-
-rank = 0
-
 def _split_frame(frame, photons, N):
     """
     randomly place each photon in frame into one of N 
@@ -112,7 +109,7 @@ class Data_getter():
         cachedir     = None, 
         frame_model  = None, 
         sparse_fnam  = None, 
-        fnam_append  = '-sparse.h5',
+        fnam_append  = '-sparse-{pixels}.h5',
         mpi_split_frames = False, 
         working_directory = './',
         load_dense = True,
@@ -130,7 +127,12 @@ class Data_getter():
             
             stem         = pathlib.Path(cxi_file).stem
             self.dataset = dataset
+            fnam_append = fnam_append.format(pixels = np.sum(mask))
             self.sparse_fnam = f'{cachedir}/{stem}{fnam_append}'
+
+        if mpi_split_frames :
+            self.rank = mpi_split_frames[0]
+            self.size = mpi_split_frames[1]
         
         self.filter = filter
         self.mask   = mask
@@ -149,7 +151,7 @@ class Data_getter():
             err = "frame_model = 'background' is incompatible with split_frames = True"
             raise ValueError(err)
 
-        print(f'{frame_model=} {self.frame_model=} {self.frame_model == "background"}')
+        print(f'{frame_model=} {self.frame_model=} {self.frame_model == "background"} {self.sparse_fnam=}')
         
         # background
         self.background_dataset          = background_dataset         
@@ -162,13 +164,14 @@ class Data_getter():
             self.sparse_file = self.check_sparse()
             print(self.sparse_file)
         
-        if not self.sparse_file and rank == 0 :   
+        if not self.sparse_file and self.rank == 0 :   
             # make sure this only done once 
             # by the first rank
             self.save_sparse() 
          
         self.sparse_file = True
         
+        print(f'{self.loaded=} {mpi_split_frames=}')
         if not self.loaded and mpi_split_frames:
             self.load_sparse_parallel()
         
@@ -288,11 +291,15 @@ class Data_getter():
         # make sure the frame selection and mask 
         # are consistent with 
         # those in the sparse file
-        with h5py.File(self.fnam, 'r') as f:
-            if self.filter :
-                frames = np.where(self.filter(f))[0]
-            else :
-                frames = np.arange(f[self.dataset].shape[0])
+        if hasattr(self.filter, 'dtype') and self.filter.dtype == bool :
+            frames = np.where(self.filter)[0]
+        
+        elif callable(self.filter) :
+            with h5py.File(self.fnam, 'r') as f:
+                if self.filter :
+                    frames = np.where(self.filter(f))[0]
+                else :
+                    frames = np.arange(f[self.dataset].shape[0])
 
         with h5py.File(self.sparse_fnam, 'r') as f:
             if self.mask.shape != f['mask'].shape or not np.allclose(self.mask, f['mask'][()]):
@@ -340,7 +347,9 @@ class Data_getter():
         split frames over processors
         We should be able to use this for a single process also
         """
-        for _ in tqdm(range(1), desc = 'loading sparse photons from file'):
+        rank = self.rank
+        size = self.size
+        for _ in tqdm(range(1), desc = f'loading sparse photons from file for data_chunk {rank}'):
             with h5py.File(self.sparse_fnam, 'r') as f:
                 litpix  = f['litpix'][()]
                 

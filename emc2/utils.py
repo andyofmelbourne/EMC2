@@ -1,5 +1,3 @@
-import pathlib
-import runpy
 import numpy as np
 import math
 import h5py
@@ -476,13 +474,6 @@ def get_transpose(K_di, B_di, working_directory = None):
     
     
 
-def load_config(path):
-    p = pathlib.Path(path)
-    
-    # returns a dict
-    config = runpy.run_path(str(p.absolute()))
-    
-    return config
 
 class Geom_corr():
     def __init__(self, geom_fnam = '/home/andyofmelbourne/Documents/git_repos/xfel7927/geom/r0600.geom'):
@@ -595,6 +586,7 @@ def int_to_list(N, v, name = 'parameter'):
         raise ValueError(f'could not parse {name} in configuration file: {v}')
 
     return out
+
     
 # thanks to Gaëtan de Menten
 # https://stackoverflow.com/questions/48999542/more-efficient-weighted-gini-coefficient-in-python
@@ -833,11 +825,5 @@ def save_iteration_info(P_dr, P_max_d, Q_d, rmax_d, class_r, orientation_r, occu
     
     return True
 
-def get_iterations(**config):
-    fnam = os.path.join(config['working_directory'], 'iteration_info.h5')
-    if os.path.exists(fnam):
-        with h5py.File(fnam) as f:
-            iterations = f['iterations'][()]
-    else :
-        iterations = 0
-    return iterations
+if __name__ == "__main__":
+    print('hello I am emc2.utils.py')

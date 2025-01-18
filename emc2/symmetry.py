@@ -159,3 +159,25 @@ def apply_symmetry(ar, symmetry, i0):
         raise ValueError(f'dimension {ar.ndim} not supported')
     
     return ar
+
+def get_non_voxel_operators(dimensions, symmetry):
+    
+    if symmetry == 'P1' or symmetry == 'inversion':
+        if dimensions == 2 :
+            return np.array([[[1, 0], [0, 1]]])
+        elif dimensions == 3:
+            return np.array([[[1, 0, 0], [0, 1, 0], [0, 0, 1]]])
+        else :
+            raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
+    
+    elif symmetry == 'D6' :
+        if dimensions == 3 :
+            # 3 x pi / 3 rotations about z-axis
+            #coord.x = x * c - y * s;
+            #coord.y = x * s + y * c;
+            c = 0.5;
+            s = 0.8660254037844386;
+            Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+            return np.array([Rz, Rz.dot(Rz), Rz.dot(Rz.dot(Rz))])
+        else :
+            raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
