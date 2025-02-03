@@ -56,9 +56,14 @@ def geometry(**config):
     
     # merged intensity to frame correction factor
     C = Omega * P
+
     
     # scale 
-    C /= C[mask].max()
+    scale = 1/C[mask].max()
+    print(f'scaling solid angle and polarisation factor by {scale}')
+    C *= scale
+
+    
 
     M = config['model_length']
     k = 'zero_padding' 
