@@ -116,12 +116,13 @@ class Data_getter():
         **kwargs
     ):
         self.fnam = cxi_file
+        self.rank = 0
         
         if sparse_fnam is None :
             if cachedir is None :
                 cachedir = os.path.join(working_directory, 'cachdir')
                 # create cachedir if needed
-                if not os.path.exists(cachedir) and rank == 0 :
+                if not os.path.exists(cachedir) :
                     os.mkdir(cachedir)
                 self.cachedir = cachedir
             
