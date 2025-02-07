@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 from tqdm import tqdm
+import argparse
 
 import pyopencl as cl
 
@@ -12,6 +13,12 @@ import pyopencl as cl
 #comm = MPI.COMM_WORLD
 #rank = comm.Get_rank()
 #size = comm.Get_size()
+
+class MyFormatter(
+    argparse.ArgumentDefaultsHelpFormatter,
+    argparse.RawDescriptionHelpFormatter
+):
+    pass
 
 def clip_scalar(val, vmin, vmax):
     """ convenience function to avoid using np.clip for scalar values 

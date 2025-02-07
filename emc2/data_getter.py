@@ -1,13 +1,14 @@
 # cache results using photon sparse format in pickle files
-# all dimension in dataset except the first are ravelled (the pixel coordinates are flattened)
+# all dimension in dataset except the first are ravelled
+# (the pixel coordinates are flattened)
 import h5py
 import numpy as np
 from tqdm import tqdm
 import os
-import pickle
 import pathlib
 import math
 import psutil
+import sys
 
 from . import utils_cl
 from . import utils
@@ -45,45 +46,46 @@ def split_frame(frame, photons, target):
 
 
 def transpose_data(
-    K_di, 
-    dataset      = '/entry_1/data_1/data',
-    fnam         = 'dataT.h5',
-    working_directory = None,
-    cachedir     = None, 
-    dtype        = None,
-    max_mem_mb   = 4000):
+    K_di,
+    dataset='/entry_1/data_1/data',
+    fnam='dataT.h5',
+    working_directory=None,
+    cachedir=None,
+    dtype=None,
+    max_mem_mb=4000
+):
     """
     transpose dataset and write to cxi file
     for the purposes of spawning another Data_getter
     K_id
     """
-    if cachedir is None :
+    if cachedir is None:
         cachedir = os.path.join(working_directory, 'cachdir')
         # create cachedir if needed
-        if not os.path.exists(cachedir) :
+        if not os.path.exists(cachedir):
             os.mkdir(cachedir)
         cachedir = cachedir
-    
+
     fnam_out = os.path.join(cachedir, fnam)
-    print(f'saving transpose of data to {fnam_out}/{dataset}')
-    
+    print(f'saving transpose of data to {fnam_out}/{dataset}', file=sys.stderr)
+
     D, I = K_di.shape
-    
+
     # determine chunk size
     mb = (D*I) * np.dtype(K_di.dtype).itemsize / 1024**2
     chunksize = int(I * mb / max_mem_mb)
 
-    if dtype is None :
+    if dtype is None:
         dtype = K_di.dtype
-    
+
     with h5py.File(fnam_out, 'w') as f:
         data = f.create_dataset(
-            dataset, 
-            shape = (I, D), 
-            dtype = dtype, 
-            chunks = (1, D), 
-            compression = 'gzip', 
-            compression_opts = 1, 
+            dataset,
+            shape=(I, D), 
+            dtype=dtype, 
+            chunks=(1, D), 
+            compression='gzip',
+            compression_opts= 1, 
             shuffle = True
         )
         
@@ -152,8 +154,6 @@ class Data_getter():
             err = "frame_model = 'background' is incompatible with split_frames = True"
             raise ValueError(err)
 
-        print(f'{frame_model=} {self.frame_model=} {self.frame_model == "background"} {self.sparse_fnam=}')
-        
         # background
         self.background_dataset          = background_dataset         
         self.background_inds_dataset     = background_inds_dataset    
@@ -161,9 +161,10 @@ class Data_getter():
         
         # check if the filter or mask has changed
         if self.sparse_file == True : 
-            print(f'checking existing sparse file...', end= ' ')
+            print('checking existing sparse file...', end=' ',
+                  file=sys.stderr)
             self.sparse_file = self.check_sparse()
-            print(self.sparse_file)
+            print(self.sparse_file, file=sys.stderr)
         
         if not self.sparse_file and self.rank == 0 :   
             # make sure this only done once 
@@ -172,7 +173,6 @@ class Data_getter():
          
         self.sparse_file = True
         
-        print(f'{self.loaded=} {mpi_split_frames=}')
         if not self.loaded and mpi_split_frames:
             self.load_sparse_parallel()
         
@@ -190,10 +190,10 @@ class Data_getter():
         if load_dense :
             mem_avail = psutil.virtual_memory().available
             mem_data  = self.size * np.dtype(self.dtype).itemsize
-            print(f'Available memory {mem_avail/1024**3} gb')
-            print(f'Dense data size  {mem_data/1024**3} gb')
+            print(f'Available memory {mem_avail/1024**3} gb', file=sys.stderr)
+            print(f'Dense data size  {mem_data/1024**3} gb', file=sys.stderr)
             if mem_data < (.2 * mem_avail) :
-                print('loading dense dataset')
+                print('loading dense dataset', file=sys.stderr)
                 self.dense_data = self[:, :]
                 # still usefull to have these
                 #del self.photons
@@ -281,7 +281,8 @@ class Data_getter():
                     out['background_sums']      = self.background_sums
         
         if self.split_frames :
-            print(f'split {split_count} into {self.shape[0] - len(frames)} frames')
+            print(f'split {split_count} into {self.shape[0] - len(frames)} \
+                  frames', file=sys.stderr)
         
         self.sparse_file = True
     

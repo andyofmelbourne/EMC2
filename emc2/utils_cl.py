@@ -1,9 +1,10 @@
 import sys
 import pyopencl as cl
-import pyopencl.array 
+import pyopencl.array
 import numpy as np
 
-def opencl_init(device_no = 0):
+
+def opencl_init(device_no=0):
     # find an opencl device (preferably a GPU) in one of the available platforms
     done = False
     for p in cl.get_platforms():
@@ -24,8 +25,8 @@ def opencl_init(device_no = 0):
             if len(devices) > 0:
                 break
     
-    print('number of devices:', len(devices))
-    print('devices:', devices)
+    print('number of devices:', len(devices), file=sys.stderr)
+    print('devices:', devices, file=sys.stderr)
     sys.stdout.flush()
 
     device = devices[device_no % len(devices)]
@@ -38,23 +39,26 @@ def opencl_init(device_no = 0):
     #queues  = queues + [cl.CommandQueue(context, device) for device in devices]
     return {'context': context, 'queue': queue, 'device': device}
 
-def opencl_init_cpu(rank = 0):
-    # find an opencl device (preferably a GPU) in one of the available platforms
-    done = False
+
+def opencl_init_cpu(rank=0):
+    """find an opencl device (preferably a GPU) if available"""
     for p in cl.get_platforms():
         devices = p.get_devices(cl.device_type.CPU)
-        if (len(devices) > 0) :
+        if (len(devices) > 0):
             break
-    
-    print('number of devices:', len(devices))
-    print('devices:', devices)
+
+    print('number of devices:', len(devices), file=sys.stderr)
+    print('devices:', devices, file=sys.stderr)
     sys.stdout.flush()
-    
+
     context = cl.Context(devices)
-    #queue   = cl.CommandQueue(context, properties = cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
-    queue   = cl.CommandQueue(context)
+    # queue   = cl.CommandQueue(
+    #    context,
+    #    properties = cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE
+    # )
+    queue = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
-    
+
 
 # these are much faster than pyopencl's packaged routines for some reason
 def to_gpu(ar, ar_cl = None, queue = None, dtype = None):
@@ -106,7 +110,7 @@ def to_gpu_2D_image(ar, queue = None, context = None):
     cl.enqueue_copy(queue, dest = I_cl, src = np.ascontiguousarray(ar.T.astype(np.float32)), 
                     origin = (0, 0), region = shape[::-1])
     return I_cl
-    
+
 def to_gpu_3D_image(ar, queue = None, context = None):
     # copy I as an opencl "image" for trilinear sampling
     shape        = ar.shape

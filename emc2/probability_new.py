@@ -1,38 +1,39 @@
 import pyopencl as cl
-import pyopencl.array 
+import pyopencl.array
 import pyclblast
-
-from emc2 import utils 
+from emc2 import utils
 from emc2 import utils_cl
-
 from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
-import time
 from tqdm import tqdm
 import sys
 
 
 # I don't think this is safe
-def calculate_wsums_r(C_i, W_ri, r00, r11, r_chunk_size = 1024):
+def calculate_wsums_r(C_i, W_ri, r00, r11, r_chunk_size=1024):
     # calculate tomogram sums
-    R         = r11-r00
-    assert(r00 >= 0)
-    assert(r11 <= W_ri.shape[0])
-    wsums_r   = np.zeros(R, dtype = float)
+    R = r11-r00
+    assert (r00 >= 0)
+    assert (r11 <= W_ri.shape[0])
+    wsums_r = np.zeros(R, dtype=float)
     W_ri.cpu = True
-        
-    r_iter = tqdm(utils.chunker(r_chunk_size, R, offset = r00), desc = 'calculating tomogram sums', disable = False)
-    
+
+    r_iter = tqdm(
+        utils.chunker(r_chunk_size, R, offset=r00),
+        desc='calculating tomogram sums',
+        disable=False
+    )
+
     for r0, r1, dr in r_iter:
         W = W_ri[r0:r1, :]
         wsums_r[r0-r00:r1-r00] = np.sum(C_i * W, axis=-1)
-    
+
     return wsums_r
 
-def calculate_K_dot_W_gpu(W_ri, K_di, r_chunk_size = 1024, d_chunk_size = 1024):
+
+def calculate_K_dot_W_gpu(W_ri, K_di, r_chunk_size=1024, d_chunk_size=1024):
     D, I = K_di.shape
-    R    = W_ri.shape[0]
+    R = W_ri.shape[0]
     
     r_chunk_size = min(r_chunk_size, R)
     d_chunk_size = min(d_chunk_size, D)
@@ -112,7 +113,8 @@ def calc_logR(K_di, W_ri, C_i, w_d, wsums_r, **config):
     cl_cpu_stuff = utils_cl.opencl_init_cpu(0)
     queue_cpu = cl_cpu_stuff['queue']
     
-    print(f'\nCompiling cpu code for offset and normalisation of P_dr')
+    print(f'\nCompiling cpu code for offset and normalisation of P_dr',
+          file=sys.stderr)
     cl_cpu_code = cl.Program(cl_cpu_stuff['context'], code.format(rotations = R)).build()
     
     # offset logR (just use cpu)
@@ -135,7 +137,10 @@ def calc_logR(K_di, W_ri, C_i, w_d, wsums_r, **config):
 
         # logR_dr = \sum_i K_di logW_ri - sum_i C_i W_ri
         # -------------------------------------------------------
-        elif config['likelihood'] == 'Poisson' and config['frame_model'] == 'basic':
+        elif (
+            config['likelihood'] == 'Poisson' and
+            config['frame_model'] == 'basic'
+        ):
             event = cl_cpu_code.logR_wsums(
                 queue_cpu,
                 (D, R),
@@ -146,7 +151,10 @@ def calc_logR(K_di, W_ri, C_i, w_d, wsums_r, **config):
 
         # logR_dr = \sum_i K_di logW_ri - w_d sum_i C_i W_ri
         # -------------------------------------------------------
-        elif config['likelihood'] == 'Poisson' and config['frame_model'] == 'fluence':
+        elif (
+            config['likelihood'] == 'Poisson' and
+            config['frame_model'] == 'fluence'
+        ):
             event = cl_cpu_code.logR_w_wsums(
                 queue_cpu,
                 (D, R),
@@ -155,92 +163,18 @@ def calc_logR(K_di, W_ri, C_i, w_d, wsums_r, **config):
                 cl.SVM(w_d),
                 cl.SVM(wsums_r)
             )
-    
+
     event.wait()
     queue_cpu.finish()
-    
+
     return P_dr, wsums_r
 
 
 code = """
-    // optimised for cpu with one worker per d
-    __kernel void normalise_P_dr (
-        global double *logR_dr, 
-        global double *P_dr, 
-        global int    *class_r,
-        global long   *rmax_d, 
-        global double *Pmax_d, 
-        global double *occupancy_dc, 
-        global double *Q_d, 
-        const double beta,
-        const double P_thresh,
-        const int d_offset,
-        const int C,
-        const int R
-    ) {{
-        int d = d_offset + get_global_id(0);
-        
-        double t, thresh;
-        int r, rmax;
-        
-        double logR_max = -DBL_MAX;
-        //double P_dr[{rotations}]; // define R at compile time
-        
-        // find argmax and max of logR_dr
-        for (r=0; r<R; r++) {{
-            t = logR_dr[d * R + r];
-            //printf("       %e %e       ", t, logR_max);
-            if (t > logR_max){{
-                rmax = r;
-                logR_max = t;
-            }}
-            P_dr[d * R + r] = t;
-        }}
-        
-        rmax_d[d] = (long)rmax;
-         
-        // calculate 
-        // P_dr = exp( beta * (logR - logRmax))
-        for (r=0; r<R; r++) {{
-            P_dr[d * R + r] = exp(beta * (P_dr[d * R + r] - logR_max));
-            //t = exp(beta * (P_dr[d * R + r] - logR_max));
-            //printf("  %d  ", r);
-        }}
-        
-        // threshold 
-        if (P_thresh > 0.) {{
-            thresh = P_thresh * P_dr[d * R + rmax] ;
-            for (r=0; r<R; r++) {{
-                if (P_dr[d * R + r] < thresh) 
-                    P_dr[d * R + r] = 0.;
-            }}
-        }}
-        
-        // normalise \sum_r P_dr to 1
-        t = 0.;
-        for (r=0; r<R; r++) {{
-            t += P_dr[d * R + r];
-        }}
-        for (r=0; r<R; r++) {{
-            P_dr[d * R + r] /= t;
-        }}
-        
-        //printf("            %d %d %d        ", d, R, rmax);
-        
-        Pmax_d[d] = P_dr[d * R + rmax];
-        
-        // calculate occupancy_dc and Q
-        // Q = \sum_r P_dr logR_dr
-        for (r=0; r<R; r++) {{
-            occupancy_dc[d * C + class_r[r]] += P_dr[d * R + r];
-            Q_d[d] += P_dr[d * R + r] * logR_dr[d * R + r];
-        }}
-    }}
-    
     // logR_dr = KlogW_dr - K_d log(wsums_r)
     // optimised for gpu with one worker per d and r
     __kernel void logR_Klog_wsums (
-        global double *KlogW_dr, 
+        global double *KlogW_dr,
         global long   *K_d,
         global double *wsums_r
     ) {{
@@ -253,26 +187,26 @@ code = """
 
     // logR_dr = KlogW_dr - w_d wsums_r
     __kernel void logR_w_wsums (
-        global double *KlogW_dr, 
+        global double *KlogW_dr,
         global double *w_d,
         global double *wsums_r
     ) {{
         int d = get_global_id(0);
         int r = get_global_id(1);
         int R = get_global_size(1);
-        
+
         KlogW_dr[d * R + r] -= w_d[d] * wsums_r[r];
     }}
 
     // logR_dr = KlogW_dr - wsums_r
     __kernel void logR_wsums (
-        global double *KlogW_dr, 
+        global double *KlogW_dr,
         global double *wsums_r
     ) {{
         int d = get_global_id(0);
         int r = get_global_id(1);
         int R = get_global_size(1);
-        
+
         KlogW_dr[d * R + r] -= wsums_r[r];
     }}
 
