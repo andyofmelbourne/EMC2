@@ -61,6 +61,7 @@ if __name__ == "__main__":
     # initialise tomograms
     mapper = tomograms_new.Mapper(
         class_c.model.ndim,
+        class_c.model.shape[0],
         class_c.P_xyz,
         class_c.mapping_matrix,
         opencl_stuff['context'],

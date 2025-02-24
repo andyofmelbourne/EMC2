@@ -70,7 +70,8 @@ float4 mapping (
     return n;
 }}
 
-//M = [s, r, (dr, b, A)]
+// M = [s, r, (dr, b, A)]
+// return x,y,z,_ voxel coordinates
 __kernel void mapping_3D_v0 (
     global float4 *out_n,
     global float4 *M,
@@ -83,6 +84,53 @@ __kernel void mapping_3D_v0 (
     int I   = get_global_size(0);
 
     out_n[rot * I + i] = mapping(M + rs[rot] * 5, r + i);
+}}
+
+
+// return raveled voxel coordinates
+__kernel void mapping_2D_n(
+    global int *out_n,
+    global float4 *M,
+    global float4 *r,
+    global int *rs,
+    const int N
+)
+{{
+    int rot = get_global_id(1);
+    int i   = get_global_id(0);
+    int I   = get_global_size(0);
+
+    float4 n;
+
+    n = mapping(M + rs[rot] * 5, r + i);
+
+    int m = N * convert_int_rte(n.x);
+    m += convert_int_rte(n.y);
+    out_n[rot * I + i] = m;
+}}
+
+
+// return raveled voxel coordinates
+__kernel void mapping_3D_n(
+    global int *out_n,
+    global float4 *M,
+    global float4 *r,
+    global int *rs,
+    const int N
+)
+{{
+    int rot = get_global_id(1);
+    int i   = get_global_id(0);
+    int I   = get_global_size(0);
+
+    float4 n;
+
+    n = mapping(M + rs[rot] * 5, r + i);
+
+    int m = N * N * convert_int_rte(n.x);
+    m += N * convert_int_rte(n.y);
+    m += convert_int_rte(n.z);
+    out_n[rot * I + i] = m;
 }}
 
 __kernel void tomo_2D (
@@ -299,7 +347,7 @@ class Mapper():
     """
 
     def __init__(
-        self, dimensions, xyz, mapping_matrix,
+        self, dimensions, model_width, xyz, mapping_matrix,
         context, queue, interpolation='linear'
     ):
 
@@ -335,8 +383,13 @@ class Mapper():
         self.pixels = np.arange(xyz.shape[1])
 
         self.shape = (
-            mapping_matrix.shape[0], mapping_matrix.shape[1], xyz.shape[1], 3
+            mapping_matrix.shape[0], mapping_matrix.shape[1], xyz.shape[1]
         )
+        self.dtype = np.int32
+
+        self.model_width = np.int32(model_width)
+
+        self.cpu = True
 
         self.context = context
         self.queue = queue
@@ -375,6 +428,13 @@ class Mapper():
                 Wmap=wmap_log)
         ).build()
 
+        if dimensions == 2:
+            self.calculate_mapping = self.code.mapping_2D_n
+        elif dimensions == 3:
+            self.calculate_mapping = self.code.mapping_3D_n
+        else:
+            raise ValueError(f'{dimensions=} not supported')
+
     def update_xyz_buffer(self, pixel_inds):
         if not compare(self.last_pixel_inds, pixel_inds):
             xyz_i = np.ascontiguousarray(
@@ -395,9 +455,9 @@ class Mapper():
         cl.enqueue_copy(self.queue, self.M_cl, M)
 
     def update_n_buffer(self, size):
-        if (not self.n_sri_cl) or ((4*size) > self.n_sri.size):
+        if (not self.n_sri_cl) or (size > self.n_sri.size):
             # make output buffer
-            self.n_sri = np.empty((4 * size,), dtype=np.float32)
+            self.n_sri = np.empty((size,), dtype=np.int32)
             self.n_sri_cl = cl.Buffer(
                 self.context, mf.WRITE_ONLY, self.n_sri.nbytes)
 
@@ -441,21 +501,26 @@ class Mapper():
 
         self.update_buffers(symmetry_inds, r_inds, pixel_inds, size)
 
-        self.code.mapping_3D_v0(
+        self.event = self.calculate_mapping(
             self.queue,
             (len(pixel_inds), len(symmetry_inds) * len(r_inds)),
             None,
             self.n_sri_cl,
             self.M_cl,
             self.xyz_i_cl,
-            self.rs_cl
+            self.rs_cl,
+            self.model_width
         )
 
-        cl.enqueue_copy(self.queue, self.n_sri, self.n_sri_cl)
+        if self.cpu:
+            cl.enqueue_copy(self.queue, self.n_sri, self.n_sri_cl)
 
-        out = self.n_sri[: 4 * size]
-        shape = (len(symmetry_inds), len(r_inds), len(pixel_inds), 4)
-        out = out.reshape(shape)[:, :, :, :3]
+            out = self.n_sri[: size]
+            shape = (len(symmetry_inds), len(r_inds), len(pixel_inds))
+            out = out.reshape(shape)
+        else:
+            out = self.n_sri_cl
+
         return out
 
 
@@ -471,7 +536,7 @@ class Tomograms():
         self.queue = mapper.queue
         self.context = mapper.context
 
-        self.shape = mapper.shape[1:-1]
+        self.shape = mapper.shape[1:]
         self.size = np.prod(self.shape)
         self.dtype = np.float32
 

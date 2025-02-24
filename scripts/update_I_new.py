@@ -213,6 +213,7 @@ if __name__ == "__main__":
     # initialise mapper: r,i -> s,n
     mapper = tomograms_new.Mapper(
         class_c.model.ndim,
+        class_c.model.shape[0],
         class_c.xyz,
         class_c.mapping_matrix,
         opencl_stuff['context'],
@@ -286,7 +287,7 @@ if __name__ == "__main__":
             raise ValueError(f'could not parse likelihood {class_c.likelihood}'
                              f'and frame_model {class_c.frame_model}')
 
-        nml_sri = mapper[:, r0:r1, :]
+        n_sri = mapper[:, r0:r1, :]
 
         # now merge N_ri and D_ri to I-space
         if class_c.maximise == 'W':
@@ -294,23 +295,9 @@ if __name__ == "__main__":
             N_ri /= D_ri
             D_ri[:] = 1.
 
-        # should probably do this with opencl
-        if class_c.model.ndim == 2:
-            i = np.array([N, 1])
-            # round to int
-            t = np.rint(nml_sri[:, :, :, :2]).astype(int)
-            n_sri = np.dot(t, i)
-            n_sri = np.dot(t.reshape(-1, 2), i).reshape(nml_sri.shape[:-1])
-
-        elif class_c.model.ndim == 3:
-            i = np.array([N**2, N, 1])
-            # round to int
-            t = np.rint(nml_sri[:, :, :, :3]).astype(int)
-            n_sri = np.dot(t.reshape(-1, 3), i).reshape(nml_sri.shape[:-1])
-
         i = np.array([N**2, N, 1])
-        for s in tqdm(range(nml_sri.shape[0]), leave=False):
-            for r in range(nml_sri.shape[1]):
+        for s in tqdm(range(n_sri.shape[0]), leave=False):
+            for r in range(n_sri.shape[1]):
 
                 N_n += np.bincount(
                     n_sri[s, r],
