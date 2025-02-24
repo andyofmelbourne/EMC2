@@ -22,7 +22,7 @@ class_0.h5
     mapping (S, R)
     symmetry
     interpolation_forward
-    pointing_fluctuations
+    xyz_offset
 """
 import h5py
 
@@ -45,13 +45,21 @@ default = {
     'mapping_matrix': None,
     'symmetry': None,
     'interpolation_forward': None,
-    'pointing_fluctuations': None,
+    'xyz_offset': None,
     'xyz': None,
     'pixels_per_voxel': None,
     'frame_selection': None,
     'mask': None,
+    'P_mask': None,
+    'P_C': None,
+    'P_xyz': None,
     'C': None,
     'wsums': None,
+    'ksums': None,
+    'orientation_index_r': None,
+    'x_offset_r': None,
+    'y_offset_r': None,
+    'z_offset_r': None,
     'class_id': None
 }
 
@@ -83,9 +91,12 @@ class Class():
                 for key in default.keys():
                     f[key][...] = getattr(self, key)
 
-    def load(self, fnam):
+    def load(self, fnam, skip=[]):
         with h5py.File(fnam, 'r') as f:
             for key in default.keys():
+                if key in skip:
+                    continue
+
                 v = f[key][()]
                 if type(v) is bytes:
                     v = v.decode()

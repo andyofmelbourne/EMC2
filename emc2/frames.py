@@ -189,7 +189,7 @@ class Frames():
     def __init__(self, B_di, w_d, W_ri, **config):
         #self.queue   = config['queue']
         #self.context = config['context']
-        self.queue   = W_ri.queues[0]
+        self.queue   = W_ri.queue
         self.context = W_ri.context
 
         W_ri.cpu = False

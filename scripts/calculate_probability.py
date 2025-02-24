@@ -9,13 +9,13 @@ from tqdm import tqdm
 import h5py
 import pyopencl as cl
 import pyopencl.array
-import time
-import pickle
-import sys
+import os
 
 import context
 from emc2 import utils
 from emc2 import utils_cl
+from emc2 import input_output
+from emc2 import data_getter
 
 
 def get_args():
@@ -24,29 +24,20 @@ def get_args():
         description="""calculate probability matrix"""
     )
     parser.add_argument(
-        'class_files',
+        'config',
         type=str,
-        nargs='+',
-        help='file name class file(s)'
+        help='config file name'
     )
     parser.add_argument(
-        '--data_chunk',
+        'iteration',
         type=int,
-        default=0,
-        help='calculate for a subset of frames'
+        help='iteration number'
     )
     parser.add_argument(
-        '--data_chunks',
+        '--frame_chunk_size',
         type=int,
-        default=1,
-        help='number of blocks to split frames over'
-    )
-    parser.add_argument(
-        '-o', '--output',
-        type=argparse.FileType('wb'),
-        default=sys.stdout.buffer,
-        help="Python pickle output file. \
-            The result is written as a dictionary"
+        default=1024,
+        help='loop over frame chunks to reduce memory consumption'
     )
     args = parser.parse_args()
     return args
@@ -154,7 +145,7 @@ def normalise_P_dr(
     P_thresh = np.float64(P_thresh)
     class_r = np.ascontiguousarray(class_r.astype(np.int32))
 
-    d_chunk_size = 8
+    d_chunk_size = max(1, int(os.cpu_count()/2))
     d_iter = tqdm(
         utils.chunker(d_chunk_size, D),
         desc='calculating P_dr from logR'
@@ -195,16 +186,31 @@ if __name__ == '__main__':
     """
     args = get_args()
 
-    working_directory = Path(args.class_files[0]).parent
+    working_directory = Path(args.config).parent
+
+    # load config file
+    config = input_output.load_config(args.config)
+
+    models = len(config['classes'])
+
+    class_files = [
+        Path(working_directory).joinpath(f'class_{c}.h5')
+        for c in range(models)
+    ]
+
+    # get beta
+    config['iteration'] = args.iteration
+    beta = utils.get_beta(**config)
 
     # get number of frames
     # get number of r's
     Rs = []
     Ds = []
-    for fnam in args.class_files:
+
+    # global_r --> class_id, local_r
+    for fnam in class_files:
         with h5py.File(fnam, 'r') as f:
             D, R = f['probability_matrix'].shape
-            beta = f['beta'][()]
             P_thresh = f['P_thresh'][()]
             Rs.append(R)
             Ds.append(D)
@@ -212,41 +218,82 @@ if __name__ == '__main__':
     assert (np.allclose(Ds, D))
     R = np.sum(Rs)
 
-    # get frames to process
-    d0, d1, dd = utils.chunker_mpi(args.data_chunks, D)
-    d0, d1, dd = d0[args.data_chunk], d1[args.data_chunk], dd[args.data_chunk]
-
-    # Load P_dr for frame selection
-    logR_dr = np.empty((dd, R), dtype=np.float64)
-    class_r = np.empty((R,), dtype=np.int32)
-
-    index = 0
-    for c, fnam in enumerate(args.class_files):
-        with h5py.File(fnam) as f:
-            r0, r1 = index, index + Rs[c]
-            logR_dr[: dd, r0: r1] = f['probability_matrix'][d0: d1]
-            class_r[r0: r1] = f['class_id'][...]
-            index = r1
-
-    # normalise and calculate
-    P_dr, rmax_d, Pmax_d, occupancy_dc, Q_d = normalise_P_dr(
-        logR_dr,
-        class_r,
-        beta,
-        P_thresh
+    d_iter = tqdm(
+        utils.chunker(args.frame_chunk_size, D),
+        desc='calculating P_dr over frame chunks'
     )
 
-    # pipe to std out
+    logR_dr = np.empty((args.frame_chunk_size, R), dtype=np.float64)
+    class_r = np.empty((R,), dtype=np.int32)
+    local_r = np.empty((R,), dtype=np.int32)
+    local_rmax_d = np.empty((D,), dtype=np.int32)
+    class_max_d = np.empty((D,), dtype=np.int32)
+    Pmax_d = np.empty((D,), dtype=np.float32)
+    occupancy_dc = np.empty((D, models), dtype=np.float32)
+    occupancy_r = np.zeros((R,), dtype=np.float32)
+    Q_d = np.empty((D,), dtype=np.float32)
+
     index = 0
-    file = sys.stdout.buffer
-    for c, fnam in enumerate(args.class_files):
-        r0, r1 = index, index + Rs[c]
-        msg = {
-            'file': fnam,
-            'mode': 'r+',
-            'probability_matrix': {
-                'slice': slice(d0, d1),
-                'data': P_dr[:dd, r0: r1]
-            }
-        }
-        pickle.dump(msg, file)
+    for c, fnam in enumerate(class_files):
+        with h5py.File(fnam) as f:
+            r0, r1 = index, index + Rs[c]
+            class_r[r0: r1] = f['class_id'][...]
+            local_r[r0: r1] = np.arange(Rs[c])
+            index = r1
+
+    for d0, d1, dd in d_iter:
+        # Load P_dr for frame selection
+        index = 0
+        for c, fnam in enumerate(class_files):
+            with h5py.File(fnam) as f:
+                r0, r1 = index, index + Rs[c]
+                logR_dr[: dd, r0: r1] = f['probability_matrix'][d0: d1]
+                index = r1
+
+        # normalise and calculate
+        P_dr, rmax_d_chunk, Pmax_d_chunk, occupancy_dc_chunk, Q_d_chunk \
+            = normalise_P_dr(
+                logR_dr[:dd],
+                class_r,
+                beta,
+                P_thresh
+            )
+
+        assert (np.all(np.isfinite(P_dr[:dd])))
+
+        class_max_d[d0:d1] = class_r[rmax_d_chunk]
+        local_rmax_d[d0:d1] = local_r[rmax_d_chunk]
+        Pmax_d[d0:d1] = Pmax_d_chunk
+        occupancy_dc[d0:d1] = occupancy_dc_chunk
+        Q_d[d0:d1] = Q_d_chunk
+        occupancy_r += np.sum(P_dr, axis=0)
+
+        # save P_dr to class files
+        index = 0
+        for c, fnam in enumerate(class_files):
+            r0, r1 = index, index + Rs[c]
+            with h5py.File(fnam, 'r+') as f:
+                f['probability_matrix'][d0:d1] = P_dr[:dd, r0:r1]
+                f['beta'][...] = beta
+            index = r1
+
+    # get sparse fnam (must be an easier way to do this...)
+    with h5py.File(class_files[0]) as f:
+        sparse_fnam = data_getter.get_sparse_fnam(
+            f['cxi_file'][()].decode(),
+            working_directory,
+            f['mask'][()]
+        )
+
+    # write to iteration info
+    utils.save_iteration_info(
+        Pmax_d,
+        Q_d,
+        class_max_d,
+        local_rmax_d,
+        occupancy_dc,
+        occupancy_r,
+        working_directory,
+        beta,
+        sparse_fnam
+    )

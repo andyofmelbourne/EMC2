@@ -1,4 +1,4 @@
-"""
+r"""
 calculate wsums_r (\sum_i C_i W_ri) for a single class
 """
 import argparse
@@ -13,6 +13,8 @@ from emc2 import tomograms_new
 from emc2 import utils_cl
 from emc2 import utils
 from emc2 import probability_new
+
+from emc2 import get_script_logger
 
 
 def get_args():
@@ -48,6 +50,10 @@ if __name__ == "__main__":
 
     working_directory = Path(args.class_file).parent
 
+    logger = get_script_logger.get_logger(
+        working_directory=working_directory
+    )
+
     # load opencl
     print('\nloading opencl context and devices:')
     opencl_stuff = utils_cl.opencl_init(device_no=args.rot_chunk)
@@ -55,7 +61,7 @@ if __name__ == "__main__":
     # initialise tomograms
     mapper = tomograms_new.Mapper(
         class_c.model.ndim,
-        class_c.xyz,
+        class_c.P_xyz,
         class_c.mapping_matrix,
         opencl_stuff['context'],
         opencl_stuff['queue'],
@@ -76,7 +82,9 @@ if __name__ == "__main__":
     else:
         r0, r1, dr = 0, R, R
 
-    wsums_r = probability_new.calculate_wsums_r(class_c.C, W_ri, r0, r1)
+    logger.info('calculating tomogram sums')
+    wsums_r = probability_new.calculate_wsums_r(class_c.P_C, W_ri, r0, r1)
+    logger.info('finished calculating tomogram sums')
 
     # save
     def write():

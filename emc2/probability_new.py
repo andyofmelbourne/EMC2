@@ -31,7 +31,7 @@ def calculate_wsums_r(C_i, W_ri, r00, r11, r_chunk_size=1024):
     return wsums_r
 
 
-def calculate_K_dot_W_gpu(W_ri, K_di, r_chunk_size=1024, d_chunk_size=1024):
+def calculate_K_dot_W_gpu(W_ri, K_di, r_chunk_size=2048, d_chunk_size=2048):
     D, I = K_di.shape
     R = W_ri.shape[0]
     

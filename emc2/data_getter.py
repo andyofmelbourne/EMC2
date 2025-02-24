@@ -10,7 +10,6 @@ import math
 import psutil
 import sys
 
-from . import utils_cl
 from . import utils
 
 def _split_frame(frame, photons, N):
@@ -92,7 +91,26 @@ def transpose_data(
         # loop over pixel chunks
         for i0, i1, di in tqdm(utils.chunker(chunksize, K_di.shape[1]), desc='tranposing data set'):
             data[i0:i1] = K_di[:, i0:i1].T
-    
+
+
+def get_sparse_fnam(
+    cxi_file,
+    working_directory,
+    mask,
+    cachedir=None,
+    fnam_append='-sparse-{pixels}.h5'
+):
+    if cachedir is None:
+        cachedir = os.path.join(working_directory, 'cachdir')
+        # create cachedir if needed
+        if not os.path.exists(cachedir):
+            os.mkdir(cachedir)
+
+    stem = pathlib.Path(cxi_file).stem
+    fnam_append = fnam_append.format(pixels=np.sum(mask))
+    sparse_fnam = f'{cachedir}/{stem}{fnam_append}'
+    return sparse_fnam
+
 
 class Data_getter():
     """Save selected frames and pixels in sparse format
@@ -119,19 +137,17 @@ class Data_getter():
     ):
         self.fnam = cxi_file
         self.rank = 0
-        
-        if sparse_fnam is None :
-            if cachedir is None :
-                cachedir = os.path.join(working_directory, 'cachdir')
-                # create cachedir if needed
-                if not os.path.exists(cachedir) :
-                    os.mkdir(cachedir)
-                self.cachedir = cachedir
-            
-            stem         = pathlib.Path(cxi_file).stem
-            self.dataset = dataset
-            fnam_append = fnam_append.format(pixels = np.sum(mask))
-            self.sparse_fnam = f'{cachedir}/{stem}{fnam_append}'
+
+        if sparse_fnam is None:
+            self.sparse_fnam = get_sparse_fnam(
+                cxi_file,
+                working_directory,
+                mask,
+                cachedir,
+                fnam_append
+            )
+
+        self.dataset = dataset
 
         if mpi_split_frames :
             self.rank = mpi_split_frames[0]
@@ -380,6 +396,7 @@ class Data_getter():
                     self.background           = f['background'][:]
                     self.background_inds      = f['background_inds'][d_start[rank]: d_stop[rank]]
                     self.background_weighting = f['background_weighting'][d_start[rank]: d_stop[rank]]
+                    self.background_sums      = f['background_sums'][()]
         
         self.total_frames = total_frames
         self.d_start_mpi = d_start
@@ -473,6 +490,9 @@ class Data_getter_cl(Data_getter):
         self.shape = self.shape[::-1]
         
         self.out_cl = None
+
+        from . import utils_cl
+        self.utils_cl = utils_cl
         
     def __getitem__(self, key):
         # transpose key
@@ -488,9 +508,9 @@ class Data_getter_cl(Data_getter):
         if self.out_cl is None or \
             self.out_cl.shape[1] < out.shape[1] or \
             self.out_cl.shape[0] < out.shape[0]:
-            self.out_cl = utils_cl.to_gpu(out, None, self.queue)
+            self.out_cl = self.utils_cl.to_gpu(out, None, self.queue)
         else :
-            self.out_cl = utils_cl.to_gpu(out, self.out_cl, self.queue)
+            self.out_cl = self.utils_cl.to_gpu(out, self.out_cl, self.queue)
         
         return self.out_cl
 

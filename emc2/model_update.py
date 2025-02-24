@@ -3,12 +3,12 @@ Wsum_r = sum_i C_i W_ri
 
 Basic:
     N_ri  = sum_d P_dr K_di
-    D_ri  = C_i sum_d P_dr 
+    D_ri  = C_i sum_d P_dr
 
 Fluence:
     N_ri  = sum_d P_dr K_di
     D_r   = C_i sum_d w_d P_dr
-    
+
     a_d   = sum_i K_di
     b_d   = sum_r P_dr Wsum_r
     w'_d  = a_d / b_d
@@ -16,10 +16,12 @@ Fluence:
 Fluence free:
     N_ri = Wsum_r sum_d P_dr K_di
     D_ri = C_i sum_d P_dr K_d
-    
+
+------------------------------------
+
 merge tomograms (then I):
     W'_ri = N_ri / D_ri
-     
+
     A_n = sum_ri M^-1(W'_ri, r, i)_n
     B_n = sum_ri M^-1(1,     r, i)_n
     I_n = A_n / B_n
@@ -28,7 +30,7 @@ merge I:
     A_n = sum_ri M^-1(N_ri, r, i)_n
     B_n = sum_ri M^-1(D_ri, r, i)_n
     I_n = A_n / B_n
-    
+
 Loop over model class (this reduces out-of-order memory operations)
 Would be nice to skip frames with low P_dr values but this complicates
 dot product which is about 40 times faster
@@ -38,12 +40,14 @@ nearest: i --> n
     n0 = round(i0 + (R_r . q_i)_0 / dq)
     n1 = round(i0 + (R_r . q_i)_1 / dq)
     n2 = round(i0 + (R_r . q_i)_2 / dq)
-    
+
     n = N^2 n0 + N n1 + n2
-    
+
     M^-1(x, r, i)_m = x delta(n - m)
 
 Perform sum in I on cpu (out-of-order memory operations)
+
+w'_d  = sum_i K_di / sum_r P_dr Wsum_r
 """
 
 import numpy as np
