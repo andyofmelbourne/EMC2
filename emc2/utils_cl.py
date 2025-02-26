@@ -18,21 +18,21 @@ def opencl_init(device_no=0):
             devices = p.get_devices(cl.device_type.GPU)
             if (len(devices) > 0) :
                 break
-        
+
     if len(devices) == 0 :
         for p in cl.get_platforms():
             devices = p.get_devices()
             if len(devices) > 0:
                 break
-    
+
     print('number of devices:', len(devices), file=sys.stderr)
     print('devices:', devices, file=sys.stderr)
     sys.stdout.flush()
 
     device = devices[device_no % len(devices)]
-    
+
     context = cl.Context(devices)
-    
+
     # one queue for each device (maybe make 2 per device later)
     queue  = cl.CommandQueue(context, device)
     # for testing

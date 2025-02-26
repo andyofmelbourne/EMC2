@@ -14,6 +14,13 @@ config = input_output.load_config(sys.argv[1])
 print(config['iterations'])
 " $1)
 
+background=$(python -c "
+from emc2 import input_output
+import sys
+config = input_output.load_config(sys.argv[1])
+print(config['classes'][0]['frame_model']=='background')
+" $1)
+
 restart=$(python -c "
 from emc2 import input_output
 import sys
@@ -68,8 +75,15 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	#parallel python scripts/calculate_probability.py ${DIR}/class_*.h5 --data_chunks 8 --data_chunk {} ::: $(seq 0 7) | python emc2/pipe_to_h5.py
 	python scripts/calculate_probability.py $1 $iteration
 
-	python scripts/update_w.py ${DIR}/class_*.h5
-
-	parallel --delay 1 --verbose --jobs 50% python scripts/update_I_new.py --numpy --r_chunk_size 1024 ::: ${DIR}/class_*.h5
+	if [[ $background == "True" ]]; then
+		for (( i = 0; i < 1; i++ )); do
+			# parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 16 | python emc2/pipe_to_h5.py" ::: $(seq 0 15)
+			python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py 
+			parallel --verbose --jobs 50% python scripts/update_I_new.py ::: ${DIR}/class_*.h5
+		done
+	else 
+		python scripts/update_w.py ${DIR}/class_*.h5
+		parallel --verbose --jobs 50% python scripts/update_I_new.py --numpy --r_chunk_size 1024 ::: ${DIR}/class_*.h5
+	fi
 	python scripts/save_model_slices.py ${DIR}/class_*.h5
 done

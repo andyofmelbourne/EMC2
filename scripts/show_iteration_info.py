@@ -262,6 +262,7 @@ class ImageView(pg.ImageView):
         self.occ_c = None
         self.most_likely_model_d = None
         self.iteration = 1
+        self.pow = 1
 
         self.update_plots()
 
@@ -402,7 +403,7 @@ class ImageView(pg.ImageView):
         plot = self.getView()
         plot.setTitle(f'iteration: {iteration}')
         self.setImage(
-            im**0.1,
+            im**self.pow,
             autoRange=False,
             autoLevels=False,
             autoHistogramRange=False

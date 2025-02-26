@@ -152,7 +152,8 @@ class Data_getter():
         if mpi_split_frames :
             self.rank = mpi_split_frames[0]
             self.size = mpi_split_frames[1]
-        
+
+        # filter can be False, None, ndarray or function
         self.filter = filter
         self.mask   = mask
         # convert None to False for h5
@@ -227,9 +228,14 @@ class Data_getter():
         split_count = 0
         
         with h5py.File(self.fnam, 'r') as f:
-            if self.filter :
+            if callable(self.filter):
                 frames = np.where(self.filter(f))[0]
-            else :
+            elif (
+                isinstance(self.filter, np.ndarray)
+                and self.filter.shape[0] == f[self.dataset].shape[0]
+            ):
+                frames = np.where(self.filter)[0]
+            else:
                 frames = np.arange(f[self.dataset].shape[0])
             
             for d in tqdm(frames, desc = f'extracting data into sparse format {self.fnam}'):

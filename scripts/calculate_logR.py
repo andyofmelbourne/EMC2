@@ -57,7 +57,7 @@ def get_args():
 
 
 def main(
-    K_di, W_ri, C_i, w_d, wsums_r, likelihood, frame_model, P_thresh
+    K_di, W_ri, C_i, w_d, wsums_r, likelihood, frame_model
 ):
     logR_dr, wsums_r = probability_new.calc_logR(
         K_di,
@@ -66,8 +66,7 @@ def main(
         w_d,
         wsums_r,
         likelihood=likelihood,
-        frame_model=frame_model,
-        P_thresh=P_thresh
+        frame_model=frame_model
     )
     return logR_dr
 
@@ -159,8 +158,7 @@ if __name__ == "__main__":
             class_c.relative_fluence,
             class_c.wsums,
             class_c.likelihood,
-            class_c.frame_model,
-            class_c.P_thresh
+            class_c.frame_model
         )
 
     assert (np.all(np.isfinite(logR_dr)))

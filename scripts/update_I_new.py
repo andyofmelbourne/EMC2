@@ -11,6 +11,8 @@ from emc2 import tomograms_new
 from emc2 import utils_cl
 from emc2 import classes
 from emc2 import data_getter
+from emc2 import model_update_background_sparse
+from emc2 import get_script_logger
 from emc2 import symmetry
 
 """
@@ -178,21 +180,29 @@ def K_dot_P(
     return N_ri
 
 
-if __name__ == "__main__":
-    args = get_args()
-
-    # load class file
-    class_c = classes.Class()
-    class_c.load(args.class_file, skip=['probability_matrix'])
-
-    if class_c.update_model is False:
-        print('update_model is False, skipping model update', file=sys.stderr)
-
-    with h5py.File(args.class_file) as f:
+def main(
+    class_file,
+    mapper,
+    model,
+    K_di_getter,
+    wsums,
+    w_d,
+    C_i,
+    r_chunk_size,
+    frame_chunk_size,
+    ksums,
+    numpy=True,
+    sparse=False,
+    P_thresh=0.,
+    likelihood='Poisson',
+    frame_model='basic',
+    symmetry_name='P1'
+):
+    with h5py.File(class_file) as f:
         D, R = f['probability_matrix'].shape
 
-    if args.r_chunk_size:
-        r_chunk_size = min(args.r_chunk_size, R)
+    if r_chunk_size:
+        r_chunk_size = min(r_chunk_size, R)
     else:
         r_chunk_size = R
 
@@ -201,9 +211,131 @@ if __name__ == "__main__":
         desc='updating model over r-chunks'
     )
 
-    N = class_c.model.shape[0]
-    N_n = np.zeros(class_c.model.size, dtype=float)
-    D_n = np.zeros(class_c.model.size, dtype=float)
+    N = model.shape[0]
+    N_n = np.zeros(model.size, dtype=float)
+    D_n = np.zeros(model.size, dtype=float)
+
+    assert (D == K_di_getter.shape[0])
+
+    if frame_chunk_size:
+        frame_chunk_size = min(frame_chunk_size, D)
+    else:
+        frame_chunk_size = D
+
+    for r0, r1, dr in r_iter:
+        with h5py.File(class_file) as f:
+            P_dr = f['probability_matrix'][:, r0:r1]
+
+        wsums_r = wsums[r0:r1]
+        D, R = P_dr.shape
+
+        # calculate sum_d K_di P_dr
+        # which is common to all non-background models
+        N_ri = K_dot_P(
+            K_di_getter,
+            P_dr,
+            numpy=numpy,
+            sparse=sparse,
+            frame_chunk_size=frame_chunk_size,
+            P_thresh=P_thresh,
+            N_ri=None
+        )
+
+        # now calculate N_ri and D_ri
+        # according to model parameters
+        # for merging into I-space
+        if (
+            likelihood == 'Poisson' and
+            frame_model == 'basic'
+        ):
+            D_ri = C_i[None, :] * \
+                    np.sum(P_dr, axis=0)[:, None]
+
+        elif (
+            likelihood == 'Poisson'
+            and frame_model == 'fluence'
+        ):
+            D_ri = C_i[None, :] * np.dot(w_d, P_dr)[:, None]
+
+        elif (
+            likelihood == 'Poisson_fluence_free'
+            and frame_model == 'basic'
+        ):
+            N_ri *= wsums_r[:, None]
+            D_ri = C_i[None, :] * \
+                np.dot(ksums, P_dr)[:, None]
+
+        else:
+            raise ValueError(f'could not parse likelihood {class_c.likelihood}'
+                             f'and frame_model {class_c.frame_model}')
+
+        n_sri = mapper[:, r0:r1, :]
+
+        # now merge N_ri and D_ri to I-space
+        if class_c.maximise == 'W':
+            D_ri[D_ri == 0] = 1.
+            N_ri /= D_ri
+            D_ri[:] = 1.
+
+        for s in tqdm(range(n_sri.shape[0]), leave=False):
+            for r in range(n_sri.shape[1]):
+
+                N_n += np.bincount(
+                    n_sri[s, r],
+                    N_ri[r],
+                    minlength=model.size
+                )
+
+                D_n += np.bincount(
+                    n_sri[s, r],
+                    D_ri[r],
+                    minlength=model.size
+                )
+
+    # apply symmetry
+    i0 = N // 2
+
+    N_n = symmetry.apply_symmetry(
+        N_n.reshape(model.shape),
+        symmetry_name,
+        i0
+    )
+
+    D_n = symmetry.apply_symmetry(
+        D_n.reshape(model.shape),
+        symmetry_name,
+        i0
+    )
+
+    # I = N / D
+    D_n[D_n == 0] = 1.
+    N_n /= D_n
+
+    return N_n
+
+
+if __name__ == "__main__":
+    args = get_args()
+
+    working_directory = Path(args.class_file).parent
+
+    logger = get_script_logger.get_logger(
+        working_directory=working_directory
+    )
+
+    # load class file
+    class_c = classes.Class()
+    class_c.load(args.class_file, skip=['probability_matrix'])
+
+    # testing
+    # class_c.frame_model = 'basic'
+    # class_c.symmetry = 'P1'
+    # class_c.mapping_matrix = class_c.mapping_matrix[:1]
+
+    I0_n = class_c.model.copy()
+
+    if class_c.update_model is False:
+        print('update_model is False, skipping model update', file=sys.stderr)
 
     # calculate model voxel indices for each r,i pair
     # -----------------------------------------------
@@ -232,104 +364,54 @@ if __name__ == "__main__":
         frame_model=class_c.frame_model
     )
     I = K_di_getter.shape[1]
-    assert (D == K_di_getter.shape[0])
 
-    if args.frame_chunk_size:
-        frame_chunk_size = min(args.frame_chunk_size, D)
-    else:
-        frame_chunk_size = D
-
-    for r0, r1, dr in r_iter:
-        with h5py.File(args.class_file) as f:
-            P_dr = f['probability_matrix'][:, r0:r1]
-
-        wsums_r = class_c.wsums[r0:r1]
-        w_d = class_c.relative_fluence
-        D, R = P_dr.shape
-
-        # calculate sum_d K_di P_dr
-        # which is common to all non-background models
-        N_ri = K_dot_P(
+    if class_c.frame_model == 'basic':
+        I_n = main(
+            args.class_file,
+            mapper,
+            class_c.model,
             K_di_getter,
-            P_dr,
-            numpy=args.numpy,
-            sparse=args.sparse,
-            frame_chunk_size=frame_chunk_size,
-            P_thresh=args.P_thresh,
-            N_ri=None
+            class_c.wsums,
+            class_c.relative_fluence,
+            class_c.C,
+            args.r_chunk_size,
+            args.frame_chunk_size,
+            class_c.ksums,
+            args.numpy,
+            args.sparse,
+            args.P_thresh,
+            class_c.likelihood,
+            class_c.frame_model,
+            class_c.symmetry
         )
 
-        # now calculate N_ri and D_ri
-        # according to model parameters
-        # for merging into I-space
-        if (
-            class_c.likelihood == 'Poisson' and
-            class_c.frame_model == 'basic'
-        ):
-            D_ri = class_c.C[None, :] * \
-                    np.sum(P_dr, axis=0)[:, None]
+    elif class_c.frame_model == 'background':
+        B_di = data_getter.Data_getter_background(K_di_getter)
 
-        elif (
-            class_c.likelihood == 'Poisson' and
-            class_c.frame_model == 'fluence'
-        ):
-            D_ri = class_c.C[None, :] * np.dot(w_d, P_dr)[:, None]
+        with h5py.File(args.class_file) as f:
+            P_dr = f['probability_matrix'][()]
 
-        elif (
-            class_c.likelihood == 'Poisson_fluence_free' and
-            class_c.frame_model == 'basic'
-        ):
-            N_ri *= wsums_r[:, None]
-            D_ri = class_c.C[None, :] * \
-                np.dot(class_c.ksums, P_dr)[:, None]
+        I_n = model_update_background_sparse.I_update(
+            class_c.relative_fluence,
+            class_c.model,
+            P_dr,
+            K_di_getter,
+            B_di,
+            mapper,
+            class_c.C,
+            opencl_stuff['queue'],
+            opencl_stuff['context'],
+            opencl_stuff['device'],
+            class_c.symmetry
+        )
+    else:
+        raise ValueError(f'{class_c.frame_model=} not supported')
 
-        else:
-            raise ValueError(f'could not parse likelihood {class_c.likelihood}'
-                             f'and frame_model {class_c.frame_model}')
+    rms = np.mean((I0_n - I_n)**2)**0.5
+    logger.info(f'rms difference for model {class_c.class_id}: {rms}')
 
-        n_sri = mapper[:, r0:r1, :]
-
-        # now merge N_ri and D_ri to I-space
-        if class_c.maximise == 'W':
-            D_ri[D_ri == 0] = 1.
-            N_ri /= D_ri
-            D_ri[:] = 1.
-
-        i = np.array([N**2, N, 1])
-        for s in tqdm(range(n_sri.shape[0]), leave=False):
-            for r in range(n_sri.shape[1]):
-
-                N_n += np.bincount(
-                    n_sri[s, r],
-                    N_ri[r],
-                    minlength=class_c.model.size
-                )
-
-                D_n += np.bincount(
-                    n_sri[s, r],
-                    D_ri[r],
-                    minlength=class_c.model.size
-                )
-
-    # apply symmetry
-    i0 = N // 2
-
-    N_n = symmetry.apply_symmetry(
-        N_n.reshape(class_c.model.shape),
-        class_c.symmetry,
-        i0
-    )
-
-    D_n = symmetry.apply_symmetry(
-        D_n.reshape(class_c.model.shape),
-        class_c.symmetry,
-        i0
-    )
-
-    # I = N / D
-    D_n[D_n == 0] = 1.
-    N_n /= D_n
+    logger.info(f'{np.mean(I0_n)=} --> {np.mean(I_n)=}')
 
     # save
     with h5py.File(args.class_file, 'r+') as f:
-        f['model'][:] = N_n
+        f['model'][:] = I_n

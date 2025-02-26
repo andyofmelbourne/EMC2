@@ -8,6 +8,7 @@ import sys
 from context import emc2
 from emc2 import utils
 from emc2 import classes
+from emc2 import get_script_logger
 
 """
 Wsum_r = sum_i C_i W_ri
@@ -38,6 +39,12 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
 
+    working_directory = Path(args.class_files[0]).parent
+
+    logger = get_script_logger.get_logger(
+        working_directory=working_directory
+    )
+
     # load class file
     class_c = classes.Class()
     class_c.load(
@@ -47,8 +54,6 @@ if __name__ == "__main__":
 
     if class_c.update_fluence is False:
         print('update_fluence is False, skipping w_d update', file=sys.stderr)
-
-    working_directory = Path(args.class_files[0]).parent
 
     K_d = class_c.ksums
     w_d = np.zeros((K_d.shape[0],), dtype=float)
@@ -62,6 +67,10 @@ if __name__ == "__main__":
             w_d += np.dot(P_dr, wsums_r)
 
     w_d = K_d / w_d
+
+    rms = np.mean((w_d - class_c.relative_fluence)**2)**0.5
+    logger.info(f'rms difference for w_d : {rms}')
+    logger.info(f'{np.mean(w_d)=}')
 
     # write result
     c_iter = tqdm(args.class_files, desc='writing to:')

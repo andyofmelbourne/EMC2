@@ -68,8 +68,8 @@ def calc_logR(wsums_r, F_dri, likelihood='basic'):
             size = dd * dr * I
             temp = F_buf[:size].reshape(shape)
 
-            logger.info(f'mean of sum_i frame : '
-                        f'{np.mean(np.sum(temp, axis=-1))}')
+            # logger.info(f'mean of sum_i frame : '
+            #             f'{np.mean(np.sum(temp, axis=-1))}')
 
             logR_dr[d0:d1, r0:r1] = np.sum(temp, axis=-1)
 
