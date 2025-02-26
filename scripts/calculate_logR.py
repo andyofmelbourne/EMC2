@@ -10,9 +10,9 @@ import numpy as np
 from context import emc2
 from emc2 import classes
 from emc2 import data_getter
-from emc2 import tomograms_new
+from emc2 import tomograms
 from emc2 import utils_cl
-from emc2 import probability_new
+from emc2 import probability
 from emc2 import probability_background
 from emc2 import utils
 from emc2 import get_script_logger
@@ -59,7 +59,7 @@ def get_args():
 def main(
     K_di, W_ri, C_i, w_d, wsums_r, likelihood, frame_model
 ):
-    logR_dr, wsums_r = probability_new.calc_logR(
+    logR_dr, wsums_r = probability.calc_logR(
         K_di,
         W_ri,
         C_i,
@@ -78,7 +78,7 @@ def main_background(
 ):
     B_di = data_getter.Data_getter_background(K_di)
 
-    F_dri = tomograms_new.Frames(
+    F_dri = tomograms.Frames(
         context, queue, K_di, B_di, w_d,
         model, M_srn, xyz_i, C_i
     )
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         )
     else:
         # initialise tomograms
-        mapper = tomograms_new.Mapper(
+        mapper = tomograms.Mapper(
             class_c.model.ndim,
             class_c.model.shape[0],
             class_c.P_xyz,
@@ -149,7 +149,7 @@ if __name__ == "__main__":
             interpolation=class_c.interpolation_forward
         )
 
-        W_ri = tomograms_new.Tomograms(mapper, class_c.model)
+        W_ri = tomograms.Tomograms(mapper, class_c.model)
 
         logR_dr = main(
             K_di,

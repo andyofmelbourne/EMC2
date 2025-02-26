@@ -76,14 +76,14 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	python scripts/calculate_probability.py $1 $iteration
 
 	if [[ $background == "True" ]]; then
-		for (( i = 0; i < 1; i++ )); do
+		for (( i = 0; i < 2; i++ )); do
 			# parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 16 | python emc2/pipe_to_h5.py" ::: $(seq 0 15)
-			python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py 
-			parallel --verbose --jobs 50% python scripts/update_I_new.py ::: ${DIR}/class_*.h5
+			python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
+			parallel --verbose --jobs 50% python scripts/update_I.py ::: ${DIR}/class_*.h5
 		done
-	else 
+	else
 		python scripts/update_w.py ${DIR}/class_*.h5
-		parallel --verbose --jobs 50% python scripts/update_I_new.py --numpy --r_chunk_size 1024 ::: ${DIR}/class_*.h5
+		parallel --verbose --jobs 50% python scripts/update_I.py --numpy --r_chunk_size 1024 ::: ${DIR}/class_*.h5
 	fi
 	python scripts/save_model_slices.py ${DIR}/class_*.h5
 done

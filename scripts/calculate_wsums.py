@@ -9,10 +9,10 @@ import numpy as np
 
 from context import emc2
 from emc2 import classes
-from emc2 import tomograms_new
+from emc2 import tomograms
 from emc2 import utils_cl
 from emc2 import utils
-from emc2 import probability_new
+from emc2 import probability
 
 from emc2 import get_script_logger
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     opencl_stuff = utils_cl.opencl_init(device_no=args.rot_chunk)
 
     # initialise tomograms
-    mapper = tomograms_new.Mapper(
+    mapper = tomograms.Mapper(
         class_c.model.ndim,
         class_c.model.shape[0],
         class_c.P_xyz,
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         interpolation=class_c.interpolation_forward
     )
 
-    W_ri = tomograms_new.Tomograms(mapper, class_c.model)
+    W_ri = tomograms.Tomograms(mapper, class_c.model)
 
     R = W_ri.shape[0]
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
         r0, r1, dr = 0, R, R
 
     logger.info('calculating tomogram sums')
-    wsums_r = probability_new.calculate_wsums_r(class_c.P_C, W_ri, r0, r1)
+    wsums_r = probability.calculate_wsums_r(class_c.P_C, W_ri, r0, r1)
     logger.info('finished calculating tomogram sums')
 
     # save

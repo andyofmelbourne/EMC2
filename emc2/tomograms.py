@@ -1,600 +1,842 @@
-"""
-There are two types of tomograms to make: 
-    - ones that depend on the frame number
-        - per pattern geometry
-        - per pattern wavelength 
-    
-    - ones that do not depend on frame number
-
-In both cases, we might have 2D or 3D mappings
-
-Here we will take care of the orientations 
-
-r -> class, rotation
-W_ri = I[class, R . q]
-
-"""
 import numpy as np
-import sys
-
+import logging
 import pyopencl as cl
-import pyopencl.array 
+from .utils_cl import to_gpu_2D_image, to_gpu_3D_image
 
-from . import orientations 
-from .utils_cl import to_gpu
-from . import utils
-from .model import load_models_cl
+logger = logging.getLogger(__name__)
 
-def get_rotation_matrices(queue = None, context = None, rotation_order = 10, dimensions = 3, **kwargs):
-    if dimensions == 3 and rotation_order > 0 :
-        R_cl = orientations.get_rotations_3D(rotation_order, queue, context)
-    
-    elif dimensions == 2 and rotation_order > 0 :
-        R_cl = orientations.get_rotations_2D(rotation_order, queue, context)
-    
-    elif dimensions == 2 and rotation_order == 0 :
-        R_cl = None
-    
-    else :
-        raise ValueError(f'could not reconsile dimension {dimensions} and rotation_order {rotation_order}')
-    
-    return R_cl
+mf = cl.mem_flags
+
+"""
+So it seems that we should avoid float3 data dtype:
+    https://registry.khronos.org/OpenCL/specs/2.2/html/OpenCL_C.html#alignment-of-types
+
+I might get rid of this dynamic buffer stuff, it's messy,
+and if we want to optimise we can do it manually
+"""
+
+
+def num_to_array(x):
+    if not hasattr(x, '__len__'):
+        return np.array([x])
+    else:
+        return x
+
+
+def compare(x, y):
+    """
+    if x is None
+    or has a different shape to y
+    or has different values to y
+    return False
+
+    y must be a numpy array
+    """
+    if x is None:
+        return False
+    elif x.shape != y.shape:
+        return False
+    elif not np.allclose(x, y):
+        return False
+    return True
 
 
 code = """
-        constant sampler_t interpolation = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_{interpolation} ;
-        
-        __kernel void mapping_3D_v0 (
-            global int *out_n,  
-            global float *R, 
-            global float *qx, 
-            global float *qy, 
-            global float *qz, 
-            const int M,
-            const float i0,
-            const float dq,
-            const int rotation_offset,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int r        = get_global_id(0);
-            int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
-            int pixel    = pixel_offset    + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float R_l[9];
-            
-            int j;
-            for (j=0; j<9; j++) {{
-                R_l[j] = R[9*rotation + j];
-            }}
-            
-            float4 coord ;
-            float4 W;
-            
-            float qxl = qx[pixel];
-            float qyl = qy[pixel];
-            float qzl = qz[pixel];
-            
-            coord.x = i0 + (R_l[0] * qxl + R_l[1] * qyl + R_l[2] * qzl) / dq;
-            coord.y = i0 + (R_l[3] * qxl + R_l[4] * qyl + R_l[5] * qzl) / dq;
-            coord.z = i0 + (R_l[6] * qxl + R_l[7] * qyl + R_l[8] * qzl) / dq;
-            
-            j = W_offset + r * chunk_size_i + i;
-            
-            // get flattened I index
-            out_n[j] = convert_int_rte(coord.x) * M * M + convert_int_rte(coord.y) * M + convert_int_rte(coord.z);
-        }}
-        
-        __kernel void mapping_nearest_static_v0 (
-            global int *out_n,  
-            global float *qx, 
-            global float *qy, 
-            const int M,
-            const float i0,
-            const float dq,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int i        = get_global_id(0);
-            int pixel    = pixel_offset + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float2 coord ;
-            float4 W;
-            
-            coord.x = i0 + qx[pixel] / dq;
-            coord.y = i0 + qy[pixel] / dq;
-                
-            int j = W_offset + i;
-             
-            // get flattened I index
-            out_n[j] = convert_int_rte(coord.x) * M + convert_int_rte(coord.y);
-        }}
+constant sampler_t interpolation =
+CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_{interpolation} ;
 
-        __kernel void mapping_nearest_2D_v0 (
-            global int *out_n,  
-            global float *R, 
-            global float *qx, 
-            global float *qy, 
-            const int M, // side length of model
-            const float i0,
-            const float dq,
-            const int rotation_offset,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int r        = get_global_id(0);
-            int i        = get_global_id(1);
-            int rotation = rotation_offset + r;
-            int pixel    = pixel_offset    + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float R_l[4];
-            
-            int j;
-            for (j=0; j<4; j++) {{
-                R_l[j] = R[4*rotation + j];
-            }}
-            
-            float2 coord ;
-            
-            coord.x = i0 + (R_l[2] * qx[pixel] + R_l[3] * qy[pixel]) / dq;
-            coord.y = i0 + (R_l[0] * qx[pixel] + R_l[1] * qy[pixel]) / dq;
-                
-            j = W_offset + r * chunk_size_i + i;
-        
-            // get flattened I index
-            out_n[j] = convert_int_rte(coord.x) * M + convert_int_rte(coord.y);
-        }}
-        
-        
-        // W_ri = I[class, R_r . [qx_i, qy_i]]
-        __kernel void calculate_tomograms_2D_v0 (
-            global float *Wout,  
-            __read_only image2d_t I, 
-            global float *R, 
-            global float *qx, 
-            global float *qy, 
-            const float i0,
-            const float dq,
-            global int *ro,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int r        = get_global_id(0);
-            int i        = get_global_id(1);
-            int rotation = ro[r];
-            int pixel    = pixel_offset    + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float R_l[4];
-            
-            int j;
-            for (j=0; j<4; j++) {{
-                R_l[j] = R[4*rotation + j];
-            }}
-            
-            float2 coord ;
-            float4 W;
-            
-            coord.x = i0 + (R_l[2] * qx[pixel] + R_l[3] * qy[pixel]) / dq + 0.5;
-            coord.y = i0 + (R_l[0] * qx[pixel] + R_l[1] * qy[pixel]) / dq + 0.5;
-                
-            W = read_imagef(I, interpolation, coord);
-            
-            j = W_offset + r * chunk_size_i + i;
-            
-            // Wout[j] = W.x;
-            {Wmap}
-        }}
+float4 mapping (
+    global float4 *M,
+    global float4 *r
+)
+{{
+    float4 vec = r[0];
+    float4 n   = (float4)0.;
 
-        __kernel void calculate_tomograms_static_v0 (
-            global float *Wout,  
-            __read_only image2d_t I, 
-            global float *qx, 
-            global float *qy, 
-            const float i0,
-            const float dq,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int i        = get_global_id(0);
-            int pixel    = pixel_offset + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float2 coord ;
-            float4 W;
-            
-            coord.x = i0 + qx[pixel] / dq + 0.5;
-            coord.y = i0 + qy[pixel] / dq + 0.5;
-                
-            W = read_imagef(I, interpolation, coord);
-            
-            int j = W_offset + i;
-            
-            // Wout[j] = W.x;
-            {Wmap}
-        }}
+    // offset r - dr
+    vec = vec - M[0];
 
-        __kernel void calculate_tomograms_3D_v0 (
-            global float *Wout,  
-            __read_only image3d_t I, 
-            global float *R, 
-            global float *qx, 
-            global float *qy, 
-            global float *qz, 
-            const float i0,
-            const float dq,
-            global int *ro,
-            const int pixel_offset,
-            const int W_offset)
-        {{
-            int r        = get_global_id(0);
-            int i        = get_global_id(1);
-            int rotation = ro[r];
-            int pixel    = pixel_offset    + i;
-             
-            int chunk_size_i = get_global_size(1);
-            
-            float R_l[9];
-            
-            int j;
-            for (j=0; j<9; j++) {{
-                R_l[j] = R[9*rotation + j];
-            }}
-            
-            float4 coord ;
-            float4 W;
-            
-            float qxl = qx[pixel];
-            float qyl = qy[pixel];
-            float qzl = qz[pixel];
-            
-            coord.x = i0 + (R_l[0] * qxl + R_l[1] * qyl + R_l[2] * qzl) / dq + 0.5;
-            coord.y = i0 + (R_l[3] * qxl + R_l[4] * qyl + R_l[5] * qzl) / dq + 0.5;
-            coord.z = i0 + (R_l[6] * qxl + R_l[7] * qyl + R_l[8] * qzl) / dq + 0.5;
-                
-            W = read_imagef(I, interpolation, coord);
-            
-            j = W_offset + r * chunk_size_i + i;
-            
-            // Wout[j] = W.x;
-            {Wmap}
-        }}
-        """
+    // normalise (r-dr) / |r-dr|
+    vec = normalize(vec);
 
-class Tomograms_log():
-    def __init__(self, tomo):
-        self.tomo = tomo
-    
-    def __getitem__(self, key):
-        self.tomo.set_log(True)
-        out = self.tomo.__getitem__(key)
-        self.tomo.set_log(False)
-        return out
+    // dot product A . (r-dr) / |r-dr|
+    n.x = dot(M[2], vec);
+    n.y = dot(M[3], vec);
+    n.z = dot(M[4], vec);
 
-    
-class Tomograms():
+    // offset A . (r-dr) / |r-dr| + b
+    n = n + M[1];
+
+    return n;
+}}
+
+// M = [s, r, (dr, b, A)]
+// return x,y,z,_ voxel coordinates
+__kernel void mapping_3D_v0 (
+    global float4 *out_n,
+    global float4 *M,
+    global float4 *r,
+    global int *rs
+)
+{{
+    int rot = get_global_id(1);
+    int i   = get_global_id(0);
+    int I   = get_global_size(0);
+
+    out_n[rot * I + i] = mapping(M + rs[rot] * 5, r + i);
+}}
+
+
+// return raveled voxel coordinates
+__kernel void mapping_2D_n(
+    global int *out_n,
+    global float4 *M,
+    global float4 *r,
+    global int *rs,
+    const int N
+)
+{{
+    int rot = get_global_id(1);
+    int i   = get_global_id(0);
+    int I   = get_global_size(0);
+
+    float4 n;
+
+    n = mapping(M + rs[rot] * 5, r + i);
+
+    int m = N * convert_int_rte(n.x);
+    m += convert_int_rte(n.y);
+    out_n[rot * I + i] = m;
+}}
+
+
+// return raveled voxel coordinates
+__kernel void mapping_3D_n(
+    global int *out_n,
+    global float4 *M,
+    global float4 *r,
+    global int *rs,
+    const int N
+)
+{{
+    int rot = get_global_id(1);
+    int i   = get_global_id(0);
+    int I   = get_global_size(0);
+
+    float4 n;
+
+    n = mapping(M + rs[rot] * 5, r + i);
+
+    int m = N * N * convert_int_rte(n.x);
+    m += N * convert_int_rte(n.y);
+    m += convert_int_rte(n.z);
+    out_n[rot * I + i] = m;
+}}
+
+__kernel void tomo_2D (
+    __read_only image2d_t I,
+    global float *out,
+    global float4 *M,
+    global float4 *r,
+    global int *rs
+)
+{{
+    int rot    = get_global_id(1);
+    int i      = get_global_id(0);
+    int pixels = get_global_size(0);
+
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+
+    float4 W = read_imagef(I, interpolation, (float2)(n.x, n.y));
+
+    int j = rot * pixels + i;
+    //out[j] = W.x;
+    {Wmap};
+}}
+
+
+__kernel void tomo_3D (
+    __read_only image3d_t I,
+    global float *out,
+    global float4 *M,
+    global float4 *r, // 3 dimension pixel coords
+    global int *rs // list of r-indices
+)
+{{
+    int rot    = get_global_id(1);
+    int i      = get_global_id(0);
+    int pixels = get_global_size(0);
+
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+
+    float4 W = read_imagef(I, interpolation, n);
+
+    int j = rot * pixels + i;
+    //out[j] = W.x;
+    {Wmap};
+}}
+
+
+// out = K_di log(F_dri)
+__kernel void calculate_K_logF_dri_3D (
+    __read_only image3d_t I,
+    global float *out,
+    global float4 *M, // mapping matrix
+    global float4 *r, // 3 dimension pixel coords
+    global int *rs,    // list of r-indices
+    global uchar *K_di,
+    global float *w_d,
+    global float *C_i,
+    global float *B_di,
+    const int w_offset,
+    const int C_offset,
+    const int D)
+{{
+    int rot = get_global_id(1);
+    int i = get_global_id(0);
+    int pixels = get_global_size(0);
+    int rotations = get_global_size(1);
+
+    float F, W_ri;
+
+    // calculate tomogram W_ri
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+    float4 W = read_imagef(I, interpolation, n);
+    W_ri = W.x;
+
+    // calculate F_dri
+    for (int d=0; d<D; d++) {{
+        F = w_d[d + w_offset] * C_i[i + C_offset] *
+            W_ri + B_di[d * pixels + i];
+
+        int j = d * rotations * pixels + rot * pixels + i;
+
+        if (F>0.)
+            out[j] = (float)K_di[d * pixels + i] * log(F);
+        else
+            out[j] = 0.;
+    }}
+}}
+
+
+// out = K_di log(F_dri)
+__kernel void calculate_K_logF_dri_2D (
+    __read_only image2d_t I,
+    global float *out,
+    global float4 *M, // mapping matrix
+    global float4 *r, // 3 dimension pixel coords
+    global int *rs,    // list of r-indices
+    global uchar *K_di,
+    global float *w_d,
+    global float *C_i,
+    global float *B_di,
+    const int w_offset,
+    const int C_offset,
+    const int D)
+{{
+    int rot = get_global_id(1);
+    int i = get_global_id(0);
+    int pixels = get_global_size(0);
+    int rotations = get_global_size(1);
+
+    float F, W_ri;
+
+    // calculate tomogram W_ri
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+    float4 W = read_imagef(I, interpolation, (float2)(n.x, n.y));
+    W_ri = W.x;
+
+    // calculate F_dri
+    for (int d=0; d<D; d++) {{
+        F = w_d[d + w_offset] * C_i[i + C_offset] *
+            W_ri + B_di[d * pixels + i];
+
+        int j = d * rotations * pixels + rot * pixels + i;
+
+        if (F>0.)
+            out[j] = (float)K_di[d * pixels + i] * log(F);
+        else
+            out[j] = 0.;
+    }}
+}}
+
+
+// out = F_dri = w_d C_i W_ri + B_di
+__kernel void calculate_F_dri_3D (
+    __read_only image3d_t I,
+    global float *out,
+    global float4 *M, // mapping matrix
+    global float4 *r, // 3 dimension pixel coords
+    global int *rs,    // list of r-indices
+    global float *w_d,
+    global float *C_i,
+    global float *B_di,
+    const int w_offset,
+    const int C_offset,
+    const int D)
+{{
+    int rot = get_global_id(1);
+    int i = get_global_id(0);
+    int pixels = get_global_size(0);
+    int rotations = get_global_size(1);
+
+    float F, W_ri;
+
+    // calculate tomogram W_ri
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+    float4 W = read_imagef(I, interpolation, n);
+    W_ri = W.x;
+
+    // calculate F_dri
+    for (int d=0; d<D; d++) {{
+        F = w_d[d + w_offset] * C_i[i + C_offset] *
+            W_ri + B_di[d * pixels + i];
+
+        int j = d * rotations * pixels + rot * pixels + i;
+
+        out[j] = F;
+    }}
+}}
+
+
+// out = F_dri = w_d C_i W_ri + B_di
+__kernel void calculate_F_dri_2D (
+    __read_only image2d_t I,
+    global float *out,
+    global float4 *M, // mapping matrix
+    global float4 *r, // 3 dimension pixel coords
+    global int *rs,    // list of r-indices
+    global float *w_d,
+    global float *C_i,
+    global float *B_di,
+    const int w_offset,
+    const int C_offset,
+    const int D)
+{{
+    int rot = get_global_id(1);
+    int i = get_global_id(0);
+    int pixels = get_global_size(0);
+    int rotations = get_global_size(1);
+
+    float F, W_ri;
+
+    // calculate tomogram W_ri
+    float4 n = mapping(M + rs[rot] * 5, r + i) + (float)0.5;
+    float4 W = read_imagef(I, interpolation, (float2)(n.x, n.y));
+    W_ri = W.x;
+
+    // calculate F_dri
+    for (int d=0; d<D; d++) {{
+        F = w_d[d + w_offset] * C_i[i + C_offset] *
+            W_ri + B_di[d * pixels + i];
+
+        int j = d * rotations * pixels + rot * pixels + i;
+
+        out[j] = F;
+    }}
+}}
+
+"""
+
+
+class Mapper():
     """
-    We want to allow for tomograms with different:
-        - q mappings (pointing or wavelength fluctuations)
-        - dimensions
-        - rotation orders
+    A class for mapping pixels to voxels
 
-    Rotations = {
-        (dimension, rotation_order): Rs_cl
-    }
-    for each unique combination of (dimension, rotation_order)
+    n_sri = A_sr . (r-dr) / |r-dr| + b_sr
     """
-    def __init__(self, models_I, cpu = False, **config):
-        queues  = config['queues']
-        context = config['context']
-        self.config = config
-        
-        # rotation matrices
-        # -----------------
-        self.dimensions      = utils.int_to_list(config['models'], config['dimensions']    , 'dimensions')
-        self.rotation_orders = utils.int_to_list(config['models'], config['rotation_order'], 'rotation_order')
-        self.symmetry        = utils.int_to_list(config['models'], config['symmetry']      , 'symmetry')
-        
-        self.symmetry_unique, self.symmetry_index = np.unique(self.symmetry, return_inverse = True)
-        
-        dr = set(zip(self.dimensions, self.rotation_orders))
-        
-        self.rotation_matrices_q = len(queues) * [{}]
-        for q, queue in enumerate(queues):
-            for (d, r) in dr:
-                self.rotation_matrices_q[q][(d, r)] = get_rotation_matrices(
-                    queue   = queue, 
-                    context = context, 
-                    rotation_order = r,
-                    dimensions     = d
-                )
-        
-        
-        ##########
-        self.rotations = 1 # hack
-        self.pixel_indices  = np.arange(config['pixels'])
-        self.update_mask(np.ones(config['pixels'], dtype = bool), config)
-        ##########
 
-        # ------------------------------------------------------
-        # r is scalar integer that indexes: q, class, orientation
-        #   - the number of r values is called "rotations"
-        #   - the q           for each r value is called "q_r"
-        #   - the class       for each r value is called "class_r"
-        #   - the orientation for each r value is called "orientation_r"
-        #   - the symmetry index for each r value is called "symmetry_r"
-        # ------------------------------------------------------
-        r = 0
-        qrs = []
-        crs = []
-        ors = []
-        srs = []
-            
-        for c in range(config['models']) :
-            for q in range(len(self.xy_offset)) :
-                R = self.rotation_matrices_q[0][(self.dimensions[c], self.rotation_orders[c])] 
-                
-                if R is None :
-                    r = 1
-                else :
-                    r = R.shape[0]
-                
-                s = self.symmetry_index[c]
-                
-                srs += r * [s]
-                qrs += r * [q]
-                crs += r * [c]
-                ors += range(r)
-        
-        self.q_r           = np.array(qrs)
-        self.class_r       = np.array(crs)
-        self.orientation_r = np.array(ors)
-        self.symmetry_r    = np.array(srs)
-         
-        self.rotations = np.int32(len(self.q_r))
-        self.classes   = config['models']
-        
-        # find the start and stop values within which q class don't change
-        # these are the indices of r where class or q has a new value
-        self.change_state = np.diff(self.q_r) + np.diff(self.class_r)
-        self.changes = 1 + np.where(self.change_state)[0]
-        
-        self.r_indices     = np.arange(self.rotations)
-        
-        self.shape = (self.rotations, self.pixels)
-        
-        self.dtype = np.float32
-        
-        self.W_cl_q = len(queues) * [None]
-        
-        self.queues  = queues
-        self.context = config['context'] 
-        self.active_queue = 0
-        
-        if config['interpolation_forward'] == 'linear':
+    def __init__(
+        self, dimensions, model_width, xyz, mapping_matrix,
+        context, queue, interpolation='linear'
+    ):
+
+        if interpolation == 'linear':
             self.interpolation = 'LINEAR'
-        elif config['interpolation_forward'] == 'nearest':
+
+        elif interpolation == 'nearest':
             self.interpolation = 'NEAREST'
-        else :
-            raise ValueError(f'forward interpolation strategy {interpolation_forward} not supported')
 
-        self.log = Tomograms_log(self)
-        self.cpu = cpu
+        else:
+            raise ValueError(
+                f'forward interpolation strategy {interpolation} not supported'
+            )
 
-        # load models
-        # -----------
-        self.load_models(models_I)
-        
-        self.compile()
+        self.mapping_matrix = mapping_matrix
 
-    def load_models(self, models_I):
-        self.dq     = models_I.dq
-        self.i0     = models_I.i0
-        self.models_q = []
-        for queue in self.queues :
-            self.models_q.append(load_models_cl(models_I.dimensions, models_I.I, queue, self.context))
-    
-    def set_log(self, log = True):
-        if log :
-            self.cl_code = self.cl_code_log
-        else :
-            self.cl_code = self.cl_code_normal
-    
-    def update_mask(self, pixels, config):
-        queues = config['queues']
-        
-        self.pixels         = len(pixels)
-        self.pixel_indices0 = pixels.copy()
-        self.shape = (self.rotations, self.pixels)
-        
-        # per pixel q values
-        # ------------------
-        # this links the lists to each other! 
-        # https://stackoverflow.com/questions/12791501/why-does-this-code-for-initializing-a-list-of-lists-apparently-link-the-lists-to
-        #self.qxy_q     = len(queues) * [[]]
-        
-        self.qxy_q     = [[] for i in range(len(queues))]
-        self.xy_offset = []
-        xyz = config['xyz']
-        if config['pointing_fluctuations'] :
-            N, step = config['pointing_fluctuations'] 
-            for n in (np.arange(N) - (N//2)):
-                for m in (np.arange(N) - (N//2)):
-                    xyz2 = xyz.copy()
-                    xyz2[0] += step * n
-                    xyz2[1] += step * m
-                    q = utils.calc_q(config['wavelength'], xyz2)
-                    
-                    self.xy_offset.append( [n * step, m * step] ) 
-                    for qi, queue in enumerate(queues):
-                        self.qxy_q[qi].append((
-                            to_gpu(q[0][pixels], queue = queue),
-                            to_gpu(q[1][pixels], queue = queue),
-                            to_gpu(q[2][pixels], queue = queue),
-                        ))
-        else :
-            self.xy_offset.append( [0, 0] ) 
-            for qi, queue in enumerate(queues):
-                self.qxy_q[qi].append((
-                    to_gpu(config['q'][0][pixels], queue = queue),
-                    to_gpu(config['q'][1][pixels], queue = queue),
-                    to_gpu(config['q'][2][pixels], queue = queue),
-                ))
-    
-    def compile(self):
-        # compile code twice
-        # once for computing W_ir 
-        # once for computing log(W_ir)
-        wmap     = 'Wout[j] = W.x;'
+        self.xyz = np.zeros((4, xyz.shape[1]), dtype=xyz.dtype)
+        self.xyz[:3, :] = xyz
+
+        shape = mapping_matrix.shape
+
+        self.mapping_matrix = np.zeros(
+            (shape[0], shape[1], shape[2], 4),
+            dtype=mapping_matrix.dtype
+        )
+
+        self.mapping_matrix[:, :, :, :3] = mapping_matrix
+
+        self.symmetry = np.arange(mapping_matrix.shape[0])
+
+        self.rs = np.arange(mapping_matrix.shape[1])
+
+        self.pixels = np.arange(xyz.shape[1])
+
+        self.shape = (
+            mapping_matrix.shape[0], mapping_matrix.shape[1], xyz.shape[1]
+        )
+        self.dtype = np.int32
+
+        self.model_width = np.int32(model_width)
+
+        self.cpu = True
+
+        self.context = context
+        self.queue = queue
+
+        self.last_pixel_inds = None
+        self.last_symmetry_inds = None
+        self.last_r_inds = None
+
+        self.xyz_i_cl = None
+        self.M_cl = None
+        self.n_sri_cl = None
+        self.rs_cl = None
+
+        # keep full mapping matrix on gpu
+        self.update_M_buffer()
+
+        wmap = 'out[j] = W.x;'
         wmap_log = """
-        if (W.x > 0.) 
-            Wout[j] = log(W.x);
-        else 
-            Wout[j] = 0.;
+        if (W.x > 0.)
+            out[j] = log(W.x);
+        else
+            out[j] = 0.;
         """
-        self.cl_code_normal = cl.Program(self.context, code.format(interpolation = self.interpolation, Wmap = wmap)).build()
-        self.cl_code_log    = cl.Program(self.context, code.format(interpolation = self.interpolation, Wmap = wmap_log)).build()
-        
-        self.cl_code = self.cl_code_normal
+
+        self.code = cl.Program(
+            self.context,
+            code.format(
+                interpolation=self.interpolation,
+                Wmap=wmap)
+        ).build()
+
+        self.code_log = cl.Program(
+            self.context,
+            code.format(
+                interpolation=self.interpolation,
+                Wmap=wmap_log)
+        ).build()
+
+        if dimensions == 2:
+            self.calculate_mapping = self.code.mapping_2D_n
+        elif dimensions == 3:
+            self.calculate_mapping = self.code.mapping_3D_n
+        else:
+            raise ValueError(f'{dimensions=} not supported')
+
+    def update_xyz_buffer(self, pixel_inds):
+        if not compare(self.last_pixel_inds, pixel_inds):
+            xyz_i = np.ascontiguousarray(
+                np.transpose(self.xyz[:, pixel_inds]).astype(np.float32)
+            )
+
+            self.xyz_i_cl = cl.Buffer(self.context, mf.READ_ONLY, xyz_i.nbytes)
+
+            cl.enqueue_copy(self.queue, self.xyz_i_cl, xyz_i)
+
+            self.last_pixel_inds = pixel_inds
+
+    def update_M_buffer(self):
+        # these are the mapping-vectors for each s,r pair
+        # (symmetries, rotations, 5) of type float3
+        M = np.ascontiguousarray(self.mapping_matrix.astype(np.float32))
+        self.M_cl = cl.Buffer(self.context, mf.READ_ONLY, M.nbytes)
+        cl.enqueue_copy(self.queue, self.M_cl, M)
+
+    def update_n_buffer(self, size):
+        if (not self.n_sri_cl) or (size > self.n_sri.size):
+            # make output buffer
+            self.n_sri = np.empty((size,), dtype=np.int32)
+            self.n_sri_cl = cl.Buffer(
+                self.context, mf.WRITE_ONLY, self.n_sri.nbytes)
+
+    def update_rs_buffer(self, symmetry_inds, r_inds):
+        if (not self.rs_cl) or \
+           (not compare(self.last_symmetry_inds, symmetry_inds)) or \
+           (not compare(self.last_r_inds, r_inds)):
+
+            rs = len(self.rs) * symmetry_inds[:, None] + r_inds[None, :]
+            rs = np.ascontiguousarray(rs.astype(np.int32))
+            self.rs_cl = cl.Buffer(self.context, mf.READ_ONLY, rs.nbytes)
+            cl.enqueue_copy(self.queue, self.rs_cl, rs)
+
+            self.last_symmetry_inds = symmetry_inds
+            self.last_r_inds = r_inds
 
     def parse_key(self, key):
-        assert(isinstance(key, tuple))
-        assert(len(key) == 2)
-         
-        rs     = self.r_indices[key[0]]
-        pixels = self.pixel_indices[key[1]]
-        
-        if pixels.shape != self.pixel_indices0.shape or not np.allclose(pixels, self.pixel_indices0):
-            self.update_mask(pixels, self.config)
-        
-        shape = (len(rs), len(pixels))
-        
-        # because I use int32 for indexing 
-        assert((shape[0] * shape[1]) < (2**31-1))
-        
-        return rs, pixels, shape
+        if len(key) > 0:
+            symmetry_inds = num_to_array(self.symmetry[key[0]])
 
-    def make_buffer(self, shape):
-        # we need a new cl buffer if the pixels change
-        # or the number of r's increases
-        if self.W_cl is None or self.W_cl.shape[0] < shape[0] or self.W_cl.shape[1] != shape[1]:
-            
-            self.W_cl = cl.array.empty(self.queue, shape, dtype = self.dtype)
-            
-            if self.cpu :
-                self.W = np.empty(shape, dtype = self.dtype)
-    
+        if len(key) > 1:
+            r_inds = num_to_array(self.rs[key[1]])
+        else:
+            r_inds = self.rs
+
+        if len(key) > 2:
+            pixel_inds = num_to_array(self.pixels[key[2]])
+        else:
+            pixel_inds = self.pixels
+
+        size = len(symmetry_inds) * len(r_inds) * len(pixel_inds)
+        return symmetry_inds, r_inds, pixel_inds, size
+
+    def update_buffers(self, symmetry_inds, r_inds, pixel_inds, size):
+        self.update_xyz_buffer(pixel_inds)
+        self.update_n_buffer(size)
+        self.update_rs_buffer(symmetry_inds, r_inds)
+
     def __getitem__(self, key):
-        """
-        put pixels in the first dimension for efficient summing
-        W_ri 
-        only suports slicing:
-            self[10:20, 100:20]
-        """
-        rs, pixels, shape = self.parse_key(key)
+        symmetry_inds, r_inds, pixel_inds, size = self.parse_key(key)
 
-        # set active queue 
-        self.active_queue      = (self.active_queue + 1) % len(self.queues)
-        self.queue             = self.queues[self.active_queue]
-        self.W_cl              = self.W_cl_q[self.active_queue]
-        self.qxy               = self.qxy_q[self.active_queue]
-        self.models            = self.models_q[self.active_queue]
-        self.rotation_matrices = self.rotation_matrices_q[self.active_queue]
-        
-        self.make_buffer(shape)
-        
-        # making a new buffer each time seems to help with threading
-        #self.W_cl_q[self.active_queue] = self.W_cl
-        
-        self.W_cl, self.event = self.calculate_tomograms(rs, pixels)
-        
-        if self.cpu :
-            cl.enqueue_copy(self.queue, self.W[:shape[0]], self.W_cl.data)
-            return self.W[:shape[0]]
-        else :
-            return self.W_cl
-            
-    def calculate_tomograms(self, rs0, pixels):
-        """
-        we should evaluate in chunks or r
-        such that the q-values and classes do not change
-        """
-        # these are the indices of r where class or q has a new value
-        #self.changes = 1 + np.where(np.diff(self.q_indices) + np.diff(self.class_indices))[0]
+        self.update_buffers(symmetry_inds, r_inds, pixel_inds, size)
 
-        rs_out = []
-        
-        # rs0 is the list of r indices, not neccessarily continuous
-        rs = utils.get_chunks(rs0[0], rs0[-1]+1, self.changes)
-        
-        W_offset = np.int32(0)
-        for r00, r11 in rs :
-            rs_chunk = np.ascontiguousarray(rs0[ (rs0 >= r00) * (rs0 < r11) ].astype(np.int32))
-             
-            if len(rs_chunk) == 0 :
-                continue
-            
-            c  = self.class_r[r00]
-            q  = self.q_r[r00]
-            d  = self.dimensions[c]
-            ro = self.rotation_orders[c]
-            dr = len(rs_chunk)
-            #orientation_offset = np.int32(self.orientation_r[r00])
-            #W_offset           = np.int32(dr * len(pixels))
-            orientation_r    = self.orientation_r[rs_chunk]
-            orientation_r_cl = to_gpu(orientation_r, queue = self.queue)
-            
-            if d == 2 and ro == 0 :
-                event = self.cl_code.calculate_tomograms_static_v0(self.queue, (len(pixels),), None,
-                        self.W_cl.data,
-                        self.models[c], 
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.i0, 
-                        self.dq,
-                        np.int32(0),
-                        W_offset)
-            
-            elif d == 2 and ro > 0 :
-                event = self.cl_code.calculate_tomograms_2D_v0(self.queue, (dr, len(pixels)), None,
-                        self.W_cl.data,
-                        self.models[c], 
-                        self.rotation_matrices[(d, ro)].data,
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.i0, 
-                        self.dq,
-                        orientation_r_cl.data,
-                        np.int32(0),
-                        W_offset)
-             
-            elif d == 3 and ro > 0 :
-                event = self.cl_code.calculate_tomograms_3D_v0(self.queue, (dr, len(pixels)), None,
-                        self.W_cl.data,
-                        self.models[c], 
-                        self.rotation_matrices[(d, ro)].data,
-                        self.qxy[q][0].data, 
-                        self.qxy[q][1].data, 
-                        self.qxy[q][2].data, 
-                        self.i0, 
-                        self.dq,
-                        orientation_r_cl.data,
-                        np.int32(0),
-                        W_offset)
-            
-            rs_out.append(rs_chunk.copy())
-            W_offset += np.int32(dr * len(pixels))
+        self.event = self.calculate_mapping(
+            self.queue,
+            (len(pixel_inds), len(symmetry_inds) * len(r_inds)),
+            None,
+            self.n_sri_cl,
+            self.M_cl,
+            self.xyz_i_cl,
+            self.rs_cl,
+            self.model_width
+        )
 
-        #assert(np.allclose(np.concatenate(rs_out).ravel(), rs0))
-        #print(W_offset, len(rs0), len(pixels), len(rs0) * len(pixels), file = sys.stderr)
-        #assert(W_offset == (len(rs0) * len(pixels)))
-        return self.W_cl, event
+        if self.cpu:
+            cl.enqueue_copy(self.queue, self.n_sri, self.n_sri_cl)
+
+            out = self.n_sri[: size]
+            shape = (len(symmetry_inds), len(r_inds), len(pixel_inds))
+            out = out.reshape(shape)
+        else:
+            out = self.n_sri_cl
+
+        return out
+
+
+class Tomograms():
+    """
+    A class for evaluating model tomorgams
+
+    Does not include symmetry operations
+    """
+    def __init__(self, mapper, model):
+        self.model = model
+        self.mapper = mapper
+        self.queue = mapper.queue
+        self.context = mapper.context
+
+        self.shape = mapper.shape[1:]
+        self.size = np.prod(self.shape)
+        self.dtype = np.float32
+
+        self.W_ri_cl = None
+        self.cpu = True
+        self.log = False
+
+        self.update_model()
+        self.set_log(self.log)
+
+    def set_log(self, log=False):
+        self.log = log
+        d = self.model.ndim
+
+        if log:
+            code = self.mapper.code_log
+
+        else:
+            code = self.mapper.code
+
+        if (d == 3):
+            self.tomo = code.tomo_3D
+
+        elif (d == 2):
+            self.tomo = code.tomo_2D
+
+    def update_model(self):
+        d = self.model.ndim
+        if d == 3:
+            self.I_cl = to_gpu_3D_image(self.model, self.queue, self.context)
+
+        elif d == 2:
+            self.I_cl = to_gpu_2D_image(self.model, self.queue, self.context)
+
+        else:
+            raise ValueError(f'could parse dimension {d}')
+
+    def update_W_buffer(self, shape):
+        if (self.W_ri_cl is None) or (shape != self.W_ri.shape):
+            # make output buffer
+            self.W_ri = np.empty(shape, dtype=np.float32)
+            # self.W_sri_cl = cl.Buffer(
+            #   self.context, mf.WRITE_ONLY, self.W_sri.nbytes)
+            # pyclblast.gemm needs arrays
+            self.W_ri_cl = cl.array.empty(self.queue, shape, dtype=self.dtype)
+
+    def get(self):
+        cl.enqueue_copy(self.queue, self.W_ri, self.W_ri_cl.data)
+
+        return self.W_ri
+
+    def __getitem__(self, key):
+        key = (0,) + key
+        symmetry_inds, r_inds, pixel_inds, size = self.mapper.parse_key(key)
+        self.buffer_size = size
+        self.buffer_shape = (len(r_inds), len(pixel_inds))
+
+        self.mapper.update_xyz_buffer(pixel_inds)
+        self.mapper.update_rs_buffer(symmetry_inds, r_inds)
+        self.update_W_buffer(self.buffer_shape)
+
+        self.event = self.tomo(
+            self.queue,
+            (len(pixel_inds), len(symmetry_inds) * len(r_inds)),
+            None,
+            self.I_cl,
+            self.W_ri_cl.data,
+            self.mapper.M_cl,
+            self.mapper.xyz_i_cl,
+            self.mapper.rs_cl
+        )
+
+        if self.cpu:
+            out = self.get()
+        else:
+            out = self.W_ri_cl
+
+        return out
+
+
+class Frames():
+    """
+    F_dri = w_d C_i W_ri + B_di
+
+    K_logF_F_dr = sum_i K_di logF_dri - F_dr
+    """
+
+    def __init__(
+        self, context, queue, K_di, B_di, w_d, model,
+        M_srn, xyz_i, C_i, interpolation='linear'
+    ):
+        self.context = context
+        self.queue = queue
+
+        if interpolation == 'linear':
+            self.interpolation = 'LINEAR'
+
+        elif interpolation == 'nearest':
+            self.interpolation = 'NEAREST'
+
+        else:
+            raise ValueError(f'forward interpolation strategy'
+                             f'{interpolation} not supported')
+
+        wmap = 'out[j] = W.x;'
+        self.code = cl.Program(
+            self.context,
+            code.format(
+                interpolation=self.interpolation,
+                Wmap=wmap)
+        ).build()
+
+        self.I_n_cl = None
+        self.xyz_i_cl = None
+        self.K_di_cl = None
+        self.B_di_cl = None
+        self.C_i_cl = None
+        self.w_d_cl = None
+        self.M_srn_cl = None
+        self.rs_cl = None
+        self.F_dri_cl = None
+        self.w_offset = np.int32(0)
+        self.C_offset = np.int32(0)
+
+        self.K_di = K_di
+        self.B_di = B_di
+        self.w_d = w_d
+        self.model = model
+        self.M_srn = M_srn
+        self.C_i = C_i
+        self.xyz_i = xyz_i
+
+        self.shape = (K_di.shape[0], M_srn.shape[1], K_di.shape[1])
+        self.dtype = np.float32
+        self.size = np.prod(self.shape)
+
+        self.update_model(model)
+        self.update_mapping(M_srn)
+        self.update_C(C_i)
+        self.update_xyz(xyz_i)
+
+        if model.ndim == 2:
+            self.calculate_K_logF_dri = self.code.calculate_K_logF_dri_2D
+            self.calculate_F_dri = self.code.calculate_F_dri_2D
+
+        elif model.ndim == 3:
+            self.calculate_K_logF_dri = self.code.calculate_K_logF_dri_3D
+            self.calculate_F_dri = self.code.calculate_F_dri_3D
+
+    def update_frames(self, d0, d1):
+        self.update_w(self.w_d[d0:d1])
+        self.update_K(self.K_di[d0:d1, :])
+        self.update_B(self.B_di[d0:d1, :])
+
+    def update_rotations(self, r_inds):
+        self.rotations = np.int32(r_inds.shape[0])
+
+        rs = np.ascontiguousarray(r_inds.astype(np.int32))
+
+        if self.rs_cl is None or self.rs_cl.size < rs.nbytes:
+            self.rs_cl = cl.Buffer(self.context, mf.READ_ONLY, rs.nbytes)
+
+        cl.enqueue_copy(self.queue, self.rs_cl, rs)
+
+    def update_mapping(self, M_srn):
+        shape = M_srn.shape
+
+        M_c = np.zeros(
+            (shape[0], shape[1], shape[2], 4),
+            dtype=np.float32
+        )
+
+        M_c[:, :, :, :3] = M_srn
+
+        if self.M_srn_cl is None or self.M_srn_cl.size < M_c.nbytes:
+            self.M_srn_cl = cl.Buffer(self.context, mf.READ_ONLY, M_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.M_srn_cl, M_c)
+
+    def update_B(self, B_di):
+        B_c = np.ascontiguousarray(B_di.astype(np.float32))
+
+        if self.B_di_cl is None or self.B_di_cl.size < B_c.nbytes:
+            self.B_di_cl = cl.Buffer(self.context, mf.READ_ONLY, B_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.B_di_cl, B_c)
+
+    def update_xyz(self, xyz_i):
+        # xyz (x/y/z, pixel index) location of each pixel (float)
+        # to xyz_i_cl (pixel index, x/y/z/w) (float4)
+        xyz_c = np.zeros((4, xyz_i.shape[1]), dtype=np.float32)
+        xyz_c[:3, :] = xyz_i
+
+        xyz_c = np.ascontiguousarray(np.transpose(xyz_c).astype(np.float32))
+
+        if self.xyz_i_cl is None or self.xyz_i_cl.size < xyz_c.nbytes:
+            self.xyz_i_cl = cl.Buffer(self.context, mf.READ_ONLY, xyz_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.xyz_i_cl, xyz_c)
+
+    def update_K(self, K_di):
+        self.frames, self.pixels = K_di.shape
+        self.frames = np.int32(self.frames)
+        self.pixels = np.int32(self.pixels)
+
+        K_c = np.ascontiguousarray(K_di.astype(np.uint8))
+
+        if self.K_di_cl is None or self.K_di_cl.size < K_c.nbytes:
+            self.K_di_cl = cl.Buffer(self.context, mf.READ_ONLY, K_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.K_di_cl, K_c)
+
+    def update_w(self, w_d):
+        w_c = np.ascontiguousarray(w_d.astype(np.float32))
+
+        if self.w_d_cl is None or self.w_d_cl.size < w_c.nbytes:
+            self.w_d_cl = cl.Buffer(self.context, mf.READ_ONLY, w_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.w_d_cl, w_c)
+
+    def update_C(self, C_i):
+        C_c = np.ascontiguousarray(C_i.astype(np.float32))
+
+        if self.C_i_cl is None or self.C_i_cl.size < C_c.nbytes:
+            self.C_i_cl = cl.Buffer(self.context, mf.READ_ONLY, C_c.nbytes)
+
+        cl.enqueue_copy(self.queue, self.C_i_cl, C_c)
+
+    def update_model(self, model):
+        d = model.ndim
+        if d == 3:
+            self.I_n_cl = to_gpu_3D_image(model, self.queue, self.context)
+
+        elif d == 2:
+            self.I_n_cl = to_gpu_2D_image(model, self.queue, self.context)
+
+        else:
+            raise ValueError(f'could parse dimension {d}')
+
+    def K_logF_F(self, out=None):
+        shape = (self.frames, self.rotations, self.pixels)
+
+        if out is None:
+            out = np.empty(shape, dtype=np.float32)
+
+        size = out.nbytes
+
+        if self.F_dri_cl is None or self.F_dri_cl.size < size:
+            logger.info(f'creating F_dri buffer of size {size} bytes')
+            self.F_dri_cl = cl.Buffer(self.context, mf.WRITE_ONLY, size)
+
+        self.calculate_K_logF_dri(
+            self.queue,
+            (self.pixels, self.rotations),
+            None,
+            self.I_n_cl,
+            self.F_dri_cl,
+            self.M_srn_cl,
+            self.xyz_i_cl,
+            self.rs_cl,
+            self.K_di_cl,
+            self.w_d_cl,
+            self.C_i_cl,
+            self.B_di_cl,
+            self.w_offset,
+            self.C_offset,
+            self.frames
+        )
+
+        cl.enqueue_copy(self.queue, out, self.F_dri_cl)
+        return out
+
+    def F(self, out=None):
+        shape = (self.frames, self.rotations, self.pixels)
+
+        if out is None:
+            out = np.empty(shape, dtype=np.float32)
+
+        size = out.nbytes
+
+        if self.F_dri_cl is None or self.F_dri_cl.size < size:
+            logger.info(f'creating F_dri buffer of size {size} bytes')
+            self.F_dri_cl = cl.Buffer(self.context, mf.WRITE_ONLY, size)
+
+        self.calculate_F_dri(
+            self.queue,
+            (self.pixels, self.rotations),
+            None,
+            self.I_n_cl,
+            self.F_dri_cl,
+            self.M_srn_cl,
+            self.xyz_i_cl,
+            self.rs_cl,
+            self.w_d_cl,
+            self.C_i_cl,
+            self.B_di_cl,
+            self.w_offset,
+            self.C_offset,
+            self.frames
+        )
+
+        cl.enqueue_copy(self.queue, out, self.F_dri_cl)
+        return out
