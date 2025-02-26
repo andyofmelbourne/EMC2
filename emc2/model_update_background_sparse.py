@@ -2,9 +2,11 @@
 w_d update:
 -----------
     dQ / dw_d = sum_ri P_dr C_i W_ri (K_di / F_dri - 1)
-              = sum_ri P_dr C_i W_ri K_di / (w_d C_i W_ri + B_di) - sum_ri P_dr C_i W_ri
+              = sum_ri P_dr C_i W_ri K_di / (w_d C_i W_ri + B_di)
+              - sum_ri P_dr C_i W_ri
 
-              = sum_ri P_dr K_di / (w_d + B_di / (C_i W_ri)) - sum_ri P_dr C_i W_ri
+              = sum_ri P_dr K_di / (w_d + B_di / (C_i W_ri))
+              - sum_ri P_dr C_i W_ri
               = sum_j a_j / (x + b_j) - c = 0
 
     a_j = P_dr K_di for P_dr > 0
@@ -21,13 +23,15 @@ we need:
 
 I_n update:
 -----------
-    dQ / dI_n = sum_dr sum_(i in M_rn) P_dr K_di / (I_n + B_di / (w_d C_i)) - sum_r sum_(i in M_rn) C_i sum_d w_d P_dr
+    dQ / dI_n = sum_dr sum_(i in M_rn) P_dr K_di / (I_n + B_di / (w_d C_i))
+              - sum_r sum_(i in M_rn) C_i sum_d w_d P_dr
               = sum_j a_j / (x + b_j) - c = 0
 
 assume sparse P_dr and K_di
     a_j = P_dr K_di         for i in M_rn and for non-zero elements
     b_j = B_di / (w_d C_i)  for above elements
-    c   = C_r wP_r          where wP_r = sum_d w_d P_dr and C_r = sum_(i in M_rn) C_i
+    c   = C_r wP_r          where wP_r = sum_d w_d P_dr
+                            and C_r = sum_(i in M_rn) C_i
 
 loop over r, get contributing frames and non-zero pixels, calculate M_rn
 
@@ -42,12 +46,16 @@ from . import utils
 from . import symmetry
 
 import pyopencl as cl
+import logging
+
+logger = logging.getLogger(__name__)
 
 code = """
 
 // a_j = P_dr K_di         for i in M_rn and for non-zero elements
 // b_j = B_di / (w_d C_i)  for above elements
-// c   = C_r wP_r          where wP_r = sum_d w_d P_dr and C_r = sum_(i in M_rn) C_i
+// c   = C_r wP_r          where wP_r = sum_d w_d P_dr
+//                         and C_r = sum_(i in M_rn) C_i
 
 // might be more efficient to loop over s and r
 // to avoid redundant P * K and B / (w C) calcs
@@ -90,8 +98,6 @@ __kernel void fill_buffer (
 def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
              queue, context, device,
              model_symmetry):
-    """
-    """
     # we shouldn't need this as P_thresh is already
     # used to zero P_dr values where P_dr[d] < P_thresh max_r(P_dr[d])
     # P_thresh = 0.01
@@ -148,15 +154,16 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
         Nr += len(rs)
 
     # it's possible that no frames contribute to a given class
-    print(f'average number of tomograms per frame: {Nr/D:.3f}')
+    logger.debug(f'average number of tomograms per frame: {Nr/D:.3f}')
     if Nr == 0:
-        print('This class has been abandoned by EMC! Returning original model')
+        logger.warning('This class has been abandoned by EMC! '
+                       'Returning original model')
         return I_n
 
-    print(f'minimum P value after threshold: '
-          f'{np.min([min(P) for P in Ps_dr if len(P) > 0])}')
-    print(f'maximum P value after threshold: '
-          f'{np.max([max(P) for P in Ps_dr if len(P) > 0])}')
+    logger.debug(f'minimum P value after threshold: '
+                 f'{np.min([min(P) for P in Ps_dr if len(P) > 0])}')
+    logger.debug(f'maximum P value after threshold: '
+                 f'{np.max([max(P) for P in Ps_dr if len(P) > 0])}')
 
     for _ in tqdm(range(1), desc='calculating buffer size', disable=False):
         len_rs_d = np.array([len(r) for r in rs_d])
@@ -168,16 +175,15 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     #   b_dsri
     #   n_dsri
     mem = 3 * 4 * N
-    print(f'{N=} {3 * 4 * N=}')
     if mem > 0.8 * device.global_mem_size:
         raise ValueError(f'not enough memory to store a, b, n '
                          f'buffers on gpu {mem/1024**3:.2f} gb '
                          f'required {device.global_mem_size/1024**3:.2f} '
                          f'gb available')
     else:
-        print(f'there is enough memory to store a, b, n buffers on gpu '
-              f'{mem/1024**3:.2f} gb required '
-              f'{device.global_mem_size/1024**3:.2f} gb available')
+        logger.debug(f'there is enough memory to store a, b, n buffers on gpu '
+                     f'{mem/1024**3:.2f} gb required '
+                     f'{device.global_mem_size/1024**3:.2f} gb available')
 
     # make a and b buffer, gpu or cpu? try gpu
     a_dsri_cl = cl.array.empty(queue, (N,), dtype=np.float32)
@@ -192,7 +198,6 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     M_sri.cpu = False
     offset = np.int32(0)
     event = None
-    print(f'{D=} {len(rs_d)=}')
     for d in tqdm(range(D),
                   desc='filling buffers (looping over d)', disable=False):
 
@@ -339,6 +344,7 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
 
     return out_n
 
+
 def w_update(P_cdr, K_di, B_di, W_cri, Wsums_cr, C_i):
     """
     assume sparse P_dr and K_di
@@ -389,7 +395,7 @@ def w_update(P_cdr, K_di, B_di, W_cri, Wsums_cr, C_i):
             rs_cd[c].append(rs)
             Nr += len(rs)
 
-    print(
+    logger(
         f'average number of tomograms per frame: {Nr/D:.3f}',
         file=sys.stderr
     )

@@ -70,7 +70,6 @@ def get_code():
         // find argmax and max of logR_dr
         for (r=0; r<R; r++) {{
             t = logR_dr[d * R + r];
-            //printf("       %e %e       ", t, logR_max);
             if (t > logR_max){{
                 rmax = r;
                 logR_max = t;
@@ -84,8 +83,6 @@ def get_code():
         // P_dr = exp( beta * (logR - logRmax))
         for (r=0; r<R; r++) {{
             P_dr[d * R + r] = exp(beta * (P_dr[d * R + r] - logR_max));
-            //t = exp(beta * (P_dr[d * R + r] - logR_max));
-            //printf("  %d  ", r);
         }}
 
         // threshold
@@ -105,8 +102,6 @@ def get_code():
         for (r=0; r<R; r++) {{
             P_dr[d * R + r] /= t;
         }}
-
-        //printf("            %d %d %d        ", d, R, rmax);
 
         Pmax_d[d] = P_dr[d * R + rmax];
 

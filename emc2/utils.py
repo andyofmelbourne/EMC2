@@ -2,12 +2,14 @@ import numpy as np
 import math
 import h5py
 import os
-import sys
 from tqdm import tqdm
 from pathlib import Path
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait, FIRST_COMPLETED
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class MyFormatter(
@@ -62,7 +64,7 @@ class ThreadQueue():
             for future in fs_done:
                 e = future.exception()
                 if e is not None:
-                    print(e, file=sys.stderr)
+                    logger.critical(e)
                 self.futures.remove(future)
 
     def shutdown(self):
@@ -116,9 +118,9 @@ def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 10
     if I == 0 or c <= 0.:
         if debug:
             if I == 0:
-                print(f'zero length input returning {fill_value}')
+                logger.debug(f'zero length input returning {fill_value}')
             if c <= 0:
-                print(f'bad c-value {c} returning {fill_value}')
+                logger.debug(f'bad c-value {c} returning {fill_value}')
         return fill_value
 
     # confirmed all a >  0
@@ -160,7 +162,7 @@ def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 10
         fmax = np.sum(a / b) - c
         if fmax <= 0:
             if debug:
-                print(f'fmax {fmax} is less than 0 returning 0')
+                logger.debug(f'fmax {fmax} is less than 0 returning 0')
             return 0.
 
     fmax = fmax or (np.sum(a / (xmin + b)) - c)
@@ -213,7 +215,7 @@ def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 10
     else:
         raise ValueError(f'could not parse algorithm {algorithm=}')
 
-    print(
+    logger.warning(
         f'Warning maximum iterations exceeded! \
         {x=} {xmin=} {xmax=} {fmax=} {fn=} {fpn=}'
     )
@@ -231,7 +233,7 @@ def get_transpose(K_di, B_di, working_directory=None):
     else:
         with h5py.File(fnam_dataT) as f:
             if f['entry_1/data_1/data'].shape != K_di.shape[::-1]:
-                print('transposed data found but shape is wrong, rewriting')
+                logger.debug('transposed data found but shape is wrong, rewriting')
                 write = True
 
     if write:
@@ -260,8 +262,8 @@ def get_transpose(K_di, B_di, working_directory=None):
     else:
         with h5py.File(fnam_backgroundT) as f:
             if f['entry_1/data_1/data'].shape != K_di.shape[::-1]:
-                print('transposed background found but shape is wrong, '
-                      'rewriting')
+                logger.debug('transposed background found but shape is wrong, '
+                             'rewriting')
                 write = True
 
     if write:
@@ -274,7 +276,7 @@ def get_transpose(K_di, B_di, working_directory=None):
         )
 
     # load
-    print(f'loading {fnam_backgroundT}')
+    logger.info(f'loading {fnam_backgroundT}')
     with h5py.File(fnam_backgroundT) as f:
         B_id = f['entry_1/data_1/data'][()]
     return K_id, B_id
@@ -473,31 +475,6 @@ def chunker_mpi_local(chunksize, size, N):
     return out
 
 
-def save_prob(P_dr, wsums_r, class_r, **config):
-    fnam = os.path.join(config['working_directory'], 'probability_matrix.h5')
-
-    print(f'saving probability matrix to {fnam}')
-    sys.stdout.flush()
-
-    D, R = P_dr.shape
-
-    with h5py.File(fnam, 'w') as f:
-        f.create_dataset(
-            'P_dr',
-            shape=(D, R),
-            dtype=P_dr.dtype,
-            chunks=(1, R),
-            compression='gzip',
-            compression_opts=1
-        )
-
-        f['beta'] = config['beta']
-        f['class_r'] = class_r
-        f['wsums_r'] = wsums_r
-        f['P_dr'][:] = P_dr
-    return True
-
-
 def get_model_slices(Is):
     N = Is[0].shape[0]
     classes = []
@@ -549,19 +526,6 @@ def make_models_2D_image(Is, classes = None):
     return slices_im, {'positions': positions, 'classes': classes_im, 'N': N}
 
 
-def save_models(I, **config):
-    fnam = os.path.join(config['working_directory'], 'models.h5')
-    print(f'saving models in {fnam}')
-
-    with h5py.File(fnam, 'w') as f:
-        for c in range(len(I.I)):
-            f[f'model_{c}'] = I.I[c]
-        f['relative_fluence'] = I.w
-        f['dq'] = I.dq
-        f['q_max'] = I.q_max
-        f['i0'] = I.i0
-
-
 def save_model_slices(
     models_I,
     model_dq,
@@ -576,7 +540,7 @@ def save_model_slices(
     else:
         raise ValueError(f'could not find {fnam}! Model slices not saved')
 
-    print(f'saving model slices to {fnam} for iteration {N}')
+    logger.info(f'saving model slices to {fnam} for iteration {N}')
 
     slices, classes = get_model_slices(models_I)
 
@@ -639,8 +603,8 @@ def save_iteration_info(
     else:
         N = 0
 
-    print(f'saving iteration info to {fnam} '
-          f'for iteration {N}')
+    logger.info(f'saving iteration info to {fnam} '
+                f'for iteration {N}')
 
     # initialise or resize datasets
     if N == 0:

@@ -1,5 +1,8 @@
 import h5py
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def geometry(**config):
@@ -32,12 +35,6 @@ def geometry(**config):
             pixel_area = f[key][()]
         else:
             pixel_area = dx * dy
-
-    k = 'xy_offset'
-    if k in config and config[k]:
-        xyz[0] += config[k][0]
-        xyz[1] += config[k][1]
-        print(f'apply xy offset to cxi geometry of {config[k]} m')
 
     # calculate pixel radius
     r = np.sum(xyz**2, axis=0)**0.5
@@ -111,7 +108,7 @@ def geometry(**config):
 
         q_min_model = qr[mask].min()
 
-        print(f'{q_max=} {q_max_model=}')
+        logger.debug(f'{q_max=} {q_max_model=}')
 
     else:
         raise ValueError('need "model_length" to define model voxel size')

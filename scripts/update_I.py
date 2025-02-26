@@ -173,8 +173,7 @@ def K_dot_P(
                 K_di = K_di_getter[ds]
                 Ds += len(ds)
                 np.dot(P_dr[ds, 0], K_di, out=N_ri[r])
-        print(f'processed {100 * Ds / (D * R):.2f}% of frames',
-              file=sys.stderr)
+        logger.info(f'processed {100 * Ds / (D * R):.2f}% of frames')
     else:
         raise ValueError(f'could not parse {numpy=} {sparse=}')
     return N_ri
@@ -335,11 +334,10 @@ if __name__ == "__main__":
     I0_n = class_c.model.copy()
 
     if class_c.update_model is False:
-        print('update_model is False, skipping model update', file=sys.stderr)
+        logger.info('update_model is False, skipping model update')
 
     # calculate model voxel indices for each r,i pair
     # -----------------------------------------------
-    print('\nloading opencl context and devices:', file=sys.stderr)
     opencl_stuff = utils_cl.opencl_init()
 
     # initialise mapper: r,i -> s,n

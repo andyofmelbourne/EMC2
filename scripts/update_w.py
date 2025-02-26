@@ -53,7 +53,7 @@ if __name__ == "__main__":
     )
 
     if class_c.update_fluence is False:
-        print('update_fluence is False, skipping w_d update', file=sys.stderr)
+        logger.info('update_fluence is False, skipping w_d update')
 
     K_d = class_c.ksums
     w_d = np.zeros((K_d.shape[0],), dtype=float)

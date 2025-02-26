@@ -98,7 +98,6 @@ if __name__ == '__main__':
     B_di = data_getter.Data_getter_background(K_di)
 
     # load opencl
-    print('\nloading opencl context and devices:', file=sys.stderr)
     opencl_stuff = utils_cl.opencl_init(device_no=args.data_chunk)
 
     d0 = K_di.d_start_mpi[args.data_chunk]
@@ -156,5 +155,3 @@ if __name__ == '__main__':
             }
         }
         pickle.dump(msg, file)
-
-    print('done', file=sys.stderr)

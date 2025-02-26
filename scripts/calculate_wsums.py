@@ -55,7 +55,6 @@ if __name__ == "__main__":
     )
 
     # load opencl
-    print('\nloading opencl context and devices:')
     opencl_stuff = utils_cl.opencl_init(device_no=args.rot_chunk)
 
     # initialise tomograms
@@ -94,11 +93,8 @@ if __name__ == "__main__":
                 f['wsums'][r0: r1] = wsums_r
 
         except OSError:
-            # try again
-            print('waiting to try writing to file again')
+            logger.debug('waiting to try writing to file again')
             time.sleep(np.random.random())
             write()
 
     write()
-
-    print('done')

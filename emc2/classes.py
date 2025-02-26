@@ -24,7 +24,11 @@ class_0.h5
     interpolation_forward
     xyz_offset
 """
+
 import h5py
+import logging
+
+logger = logging.getLogger(__name__)
 
 default = {
     'model': None,
@@ -79,14 +83,14 @@ class Class():
         self.check()
 
         if overwrite:
-            print(f'saving class info to {fnam}')
+            logger.info(f'saving class info to {fnam}')
             with h5py.File(fnam, 'w') as f:
                 for key in default.keys():
                     v = getattr(self, key)
-                    print(f'saving {key} {type(v)}')
+                    logger.debug(f'saving {key} {type(v)}')
                     f[key] = v
         else:
-            print(f'updating class info in {fnam}')
+            logger.info(f'updating class info in {fnam}')
             with h5py.File(fnam, 'r+') as f:
                 for key in default.keys():
                     f[key][...] = getattr(self, key)

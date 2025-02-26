@@ -123,6 +123,3 @@ if __name__ == '__main__':
 
         except EOFError:
             break
-
-        except Exception as e:
-            print(e, file=sys.stderr)

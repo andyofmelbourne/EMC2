@@ -95,15 +95,15 @@ def main_background(
 if __name__ == "__main__":
     args = get_args()
 
-    # load class file
-    class_c = classes.Class()
-    class_c.load(args.class_file)
-
     working_directory = Path(args.class_file).parent
 
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+
+    # load class file
+    class_c = classes.Class()
+    class_c.load(args.class_file)
 
     mpi_split_frames = (args.data_chunk, args.data_chunks)
 
@@ -120,7 +120,6 @@ if __name__ == "__main__":
     )
 
     # load opencl
-    print('\nloading opencl context and devices:', file=sys.stderr)
     opencl_stuff = utils_cl.opencl_init(device_no=args.data_chunk)
 
     if class_c.frame_model == 'background':
@@ -177,5 +176,3 @@ if __name__ == "__main__":
         }
     }
     pickle.dump(msg, file)
-
-    print('done', file=sys.stderr)
