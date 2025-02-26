@@ -39,7 +39,6 @@ I need a way to get the pixel values where Kd_i > 0 and Nr_i == n
 """
 
 import numpy as np
-import sys
 from tqdm import tqdm
 
 from . import utils
@@ -395,10 +394,7 @@ def w_update(P_cdr, K_di, B_di, W_cri, Wsums_cr, C_i):
             rs_cd[c].append(rs)
             Nr += len(rs)
 
-    logger(
-        f'average number of tomograms per frame: {Nr/D:.3f}',
-        file=sys.stderr
-    )
+    logger.debug(f'average number of tomograms per frame: {Nr/D:.3f}')
 
     # this is slower that single cpu (surprising) but I guess
     # the overhead with thread management
