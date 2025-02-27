@@ -75,11 +75,6 @@ if __name__ == '__main__':
 
     config = {}
 
-    # load config file
-    config.update(
-        input_output.load_config(args.config)
-    )
-
     # set working directory as the directory in which config.py resides
     config.update(
         input_output.set_working_directory(args.config)
@@ -87,6 +82,12 @@ if __name__ == '__main__':
 
     logger = get_script_logger.get_logger(
         working_directory=config['working_directory']
+    )
+    logger.info('init (start)')
+
+    # load config file
+    config.update(
+        input_output.load_config(args.config)
     )
 
     rotation_matrices = {}
@@ -257,3 +258,5 @@ if __name__ == '__main__':
         # write class file
         fnam = Path.joinpath(Path(c['working_directory']), f'class_{ci}.h5')
         class_c.save(fnam, overwrite=True)
+
+    logger.info('init (stop)')

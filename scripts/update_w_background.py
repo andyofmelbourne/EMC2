@@ -63,6 +63,7 @@ if __name__ == '__main__':
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+    logger.info('update_w_background (start)')
 
     # load config file
     config = input_output.load_config(args.config)
@@ -155,3 +156,4 @@ if __name__ == '__main__':
             }
         }
         pickle.dump(msg, file)
+    logger.info('update_w_background (stop)')

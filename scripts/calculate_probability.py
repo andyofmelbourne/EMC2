@@ -16,6 +16,7 @@ from emc2 import utils
 from emc2 import utils_cl
 from emc2 import input_output
 from emc2 import data_getter
+from emc2 import get_script_logger
 
 
 def get_args():
@@ -183,6 +184,11 @@ if __name__ == '__main__':
 
     working_directory = Path(args.config).parent
 
+    logger = get_script_logger.get_logger(
+        working_directory=working_directory
+    )
+    logger.info('calculate_probability (start)')
+
     # load config file
     config = input_output.load_config(args.config)
 
@@ -292,3 +298,4 @@ if __name__ == '__main__':
         beta,
         sparse_fnam
     )
+    logger.info('calculate_probability (stop)')

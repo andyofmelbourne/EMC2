@@ -321,6 +321,7 @@ if __name__ == "__main__":
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+    logger.info('update_I (start)')
 
     # load class file
     class_c = classes.Class()
@@ -413,3 +414,5 @@ if __name__ == "__main__":
     # save
     with h5py.File(args.class_file, 'r+') as f:
         f['model'][:] = I_n
+
+    logger.info('update_I (stop)')

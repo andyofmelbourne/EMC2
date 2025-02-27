@@ -36,6 +36,13 @@ assume sparse P_dr and K_di
 loop over r, get contributing frames and non-zero pixels, calculate M_rn
 
 I need a way to get the pixel values where Kd_i > 0 and Nr_i == n
+
+This is basically an exercise in mapping each r,i pair to an n
+then removing zero elements which depends on d
+the (r, i) to n mapping is the same for all classes with the same
+mapping function so it's feasable to store this for 2D classes
+on the order of 20 x 200,000 numbers
+but in 3D with high symmetry this would be a very large dataset
 """
 
 import numpy as np

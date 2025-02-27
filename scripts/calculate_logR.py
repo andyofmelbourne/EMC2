@@ -100,6 +100,7 @@ if __name__ == "__main__":
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+    logger.info('calculate_logR (start)')
 
     # load class file
     class_c = classes.Class()
@@ -176,3 +177,5 @@ if __name__ == "__main__":
         }
     }
     pickle.dump(msg, file)
+
+    logger.info('calculate_logR (stop)')

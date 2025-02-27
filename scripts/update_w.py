@@ -3,7 +3,6 @@ import h5py
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
-import sys
 
 from context import emc2
 from emc2 import utils
@@ -44,6 +43,7 @@ if __name__ == "__main__":
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+    logger.info('update_w (start)')
 
     # load class file
     class_c = classes.Class()
@@ -78,3 +78,5 @@ if __name__ == "__main__":
         c_iter.set_description(f'writing to: {class_file}')
         with h5py.File(class_file, 'r+') as f:
             f['relative_fluence'][:] = w_d
+
+    logger.info('update_w (stop)')

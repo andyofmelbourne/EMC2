@@ -28,6 +28,7 @@ config = input_output.load_config(sys.argv[1])
 print(config['restart'])
 " $1)
 
+
 # chunk calls to logR based on number of frames and orientations
 logR_cmd() {
 python -c "
@@ -57,6 +58,7 @@ export -f logR_cmd
 if [[ $restart == "True" ]]; then
 	rm -f ${DIR}/iteration_info.h5
 	rm -f ${DIR}/class_*.h5
+	rm -f ${DIR}/emc2.log
 	python scripts/init.py $1
 fi
 
@@ -67,7 +69,8 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	parallel --verbose --jobs 50% python scripts/calculate_wsums.py ::: ${DIR}/class_*.h5
 
 	# calculate logR matrix with 1 cpu per chunk
-	logR_cmd | parallel --delay 1 --verbose --jobs 50% | python emc2/pipe_to_h5.py
+	# logR_cmd | parallel --delay 1 --verbose --jobs 50% | python emc2/pipe_to_h5.py
+	logR_cmd | parallel --delay 0 --verbose --jobs 50% | python emc2/pipe_to_h5.py
 
 	# calculate P matrix by normalising logR over classes with 8 cpus
 	# this doesn't need to use parallel, it helps a little with loading
@@ -77,8 +80,8 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 
 	if [[ $background == "True" ]]; then
 		for (( i = 0; i < 2; i++ )); do
-			# parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 16 | python emc2/pipe_to_h5.py" ::: $(seq 0 15)
-			python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
+			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 16" ::: $(seq 0 4) | python emc2/pipe_to_h5.py
+			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
 			parallel --verbose --jobs 50% python scripts/update_I.py ::: ${DIR}/class_*.h5
 		done
 	else

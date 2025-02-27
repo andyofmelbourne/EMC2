@@ -44,15 +44,16 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
 
-    # load class file
-    class_c = classes.Class()
-    class_c.load(args.class_file)
-
     working_directory = Path(args.class_file).parent
 
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
+    logger.info('calculate_wsums (start)')
+
+    # load class file
+    class_c = classes.Class()
+    class_c.load(args.class_file)
 
     # load opencl
     opencl_stuff = utils_cl.opencl_init(device_no=args.rot_chunk)
@@ -98,3 +99,4 @@ if __name__ == "__main__":
             write()
 
     write()
+    logger.info('calculate_wsums (stop)')

@@ -5,6 +5,7 @@ import h5py
 
 import context
 from emc2 import utils
+from emc2 import get_script_logger
 
 
 def get_args():
@@ -24,6 +25,12 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
+
+    working_directory = Path(args.class_files[0]).parent
+    logger = get_script_logger.get_logger(
+        working_directory=working_directory
+    )
+    logger.info('save_model_slices (start)')
 
     models = []
     class_ids = []
@@ -46,3 +53,5 @@ if __name__ == '__main__':
         dq,
         working_directory
     )
+
+    logger.info('save_model_slices (stop)')
