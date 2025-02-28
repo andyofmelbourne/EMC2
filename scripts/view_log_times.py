@@ -175,6 +175,7 @@ class Process():
     def __init__(self, msg, start_time):
         self.msg = msg
         self.start_time = start_time
+        self.stop_time = None
 
     def set_time_stop(self, time):
         self.stop_time = time
@@ -189,6 +190,7 @@ if __name__ == "__main__":
     t1 = None
 
     processes = {}
+    numbers = {}
     with open(args.logfile, 'r') as f:
         for line in f.readlines():
             if t0 is None:
@@ -215,6 +217,24 @@ if __name__ == "__main__":
                 if start and (key not in processes):
                     processes[key] = Process(msg, time)
 
+                # add repeate msgs
+                elif start and (key in processes):
+                    if processes[key].stop_time is None:
+                        err = f'a duplicate process has started before the '\
+                              f'last ono finished!\n{line}'
+                        raise ValueError(err)
+                    else:
+                        # move old process
+                        if key not in numbers:
+                            numbers[key] = 0
+                        new_key = key + (numbers[key],)
+                        numbers[key] += 1
+
+                        processes[new_key] = processes[key]
+
+                        # and new process
+                        processes[key] = Process(msg, time)
+
                 # add stop time
                 elif stop and (key in processes):
                     processes[key].set_time_stop(time)
@@ -234,6 +254,11 @@ if __name__ == "__main__":
                     raise ValueError(err)
 
         t1 = float(line.split(':')[0])
+
+    # sometimes we lose logs (??)
+    # so check if we have start/stop for each one
+    keys = processes.keys()
+    processes = {k: v for k, v in processes.items() if v.stop_time is not None}
 
     # show a bar plot
     # | msg ---------- [ random colour ]
