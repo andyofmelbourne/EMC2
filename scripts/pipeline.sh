@@ -80,9 +80,9 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 
 	if [[ $background == "True" ]]; then
 		for (( i = 0; i < 2; i++ )); do
-			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 16" ::: $(seq 0 4) | python emc2/pipe_to_h5.py
+			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 4" ::: $(seq 0 3) | python emc2/pipe_to_h5.py
 			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
-			parallel --verbose --jobs 50% python scripts/update_I.py ::: ${DIR}/class_*.h5
+			parallel --verbose --jobs 1 python scripts/update_I.py ::: ${DIR}/class_*.h5
 		done
 	else
 		python scripts/update_w.py ${DIR}/class_*.h5

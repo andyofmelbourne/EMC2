@@ -138,10 +138,13 @@ class Data_getter():
         mpi_split_frames=False,
         working_directory='./',
         load_dense=True,
+        delay_data_load=False,
         **kwargs
     ):
         self.fnam = cxi_file
         self.rank = 0
+        self.size = 1
+        self.load_dense = load_dense
 
         if sparse_fnam is None:
             self.sparse_fnam = get_sparse_fnam(
@@ -151,6 +154,12 @@ class Data_getter():
                 cachedir,
                 fnam_append
             )
+
+        # check if sparse file exists
+        # if another process is running this at the same time
+        # there could be a race condition
+        self.sparse_file = pathlib.Path(self.sparse_fnam).is_file()
+        self.loaded = False
 
         self.dataset = dataset
 
@@ -165,10 +174,6 @@ class Data_getter():
         if split_frames is None:
             split_frames = False
         self.split_frames = split_frames
-
-        # check if sparse file exists
-        self.sparse_file = pathlib.Path(self.sparse_fnam).is_file()
-        self.loaded = False
 
         self.frame_model = frame_model
 
@@ -195,10 +200,14 @@ class Data_getter():
 
         self.sparse_file = True
 
-        if not self.loaded and mpi_split_frames:
+        if not delay_data_load:
+            self.load()
+
+    def load(self):
+        if not self.loaded and self.size > 1:
             self.load_sparse_parallel()
 
-        elif not self.loaded and not mpi_split_frames:
+        elif not self.loaded and self.size == 1:
             self.load_sparse()
 
         # index frames
@@ -209,7 +218,7 @@ class Data_getter():
         # load dense data
         # if it takes up less than 20% of available memory
         self.dense_data = None
-        if load_dense:
+        if self.load_dense:
             mem_avail = psutil.virtual_memory().available
             mem_data = self.size * np.dtype(self.dtype).itemsize
             logger.debug(f'Available memory {mem_avail/1024**3} gb')
@@ -322,12 +331,23 @@ class Data_getter():
         if hasattr(self.filter, 'dtype') and self.filter.dtype == bool:
             frames = np.where(self.filter)[0]
 
+        elif (
+            hasattr(self.filter, 'dtype')
+            and (self.filter.dtype == np.int32
+                 or self.filter.dtype == np.int64)
+        ):
+            frames = self.filter
+
         elif callable(self.filter):
             with h5py.File(self.fnam, 'r') as f:
                 if self.filter:
                     frames = np.where(self.filter(f))[0]
                 else:
                     frames = np.arange(f[self.dataset].shape[0])
+
+        else:
+            err = f'cannot parse filter type {type(self.filter)}'
+            raise ValueError(err)
 
         with h5py.File(self.sparse_fnam, 'r') as f:
             if (
@@ -371,8 +391,8 @@ class Data_getter():
                     self.background_weighting = f['background_weighting'][()]
                     self.background_sums = f['background_sums'][()]
 
-        self.d_start_mpi = 0
-        self.d_stop_mpi = len(self.litpix)
+        self.d_start_mpi = [0]
+        self.d_stop_mpi = [len(self.litpix)]
         self.total_frames = len(self.litpix)
         self.dtype = self.photons.dtype
 

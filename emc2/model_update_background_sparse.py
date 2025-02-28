@@ -112,6 +112,7 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     D, I = K_di.shape
     R = P_dr.shape[1]
 
+    logger.debug('calculating cc_n (start)')
     # np accelerates this over cpus
     for i in tqdm(range(1), desc='calculating wP_r = sum_d w_d P_dr'):
         wP_r = np.dot(w_d, P_dr)
@@ -146,9 +147,12 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
                 N_sri.ravel(), t[:, :dr].ravel(), minlength=cc_n.size
             )
 
+    logger.debug('calculating cc_n (stop)')
+
     cl_code = cl.Program(context, code).build()
 
     # make sparse P_dr
+    logger.debug('generating sparse P-matrix (start)')
     rs_d = []
     Ps_dr = []
     Nr = 0
@@ -171,6 +175,8 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     logger.debug(f'maximum P value after threshold: '
                  f'{np.max([max(P) for P in Ps_dr if len(P) > 0])}')
 
+    logger.debug('generating sparse P-matrix (stop)')
+
     for _ in tqdm(range(1), desc='calculating buffer size', disable=False):
         len_rs_d = np.array([len(r) for r in rs_d])
         len_pix_d = np.diff(K_di.frame_inds_indices)
@@ -192,6 +198,7 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
                      f'{device.global_mem_size/1024**3:.2f} gb available')
 
     # make a and b buffer, gpu or cpu? try gpu
+    logger.debug('filling a, b, n buffers (start)')
     a_dsri_cl = cl.array.empty(queue, (N,), dtype=np.float32)
     b_dsri_cl = cl.array.empty(queue, (N,), dtype=np.float32)
     n_dsri_cl = cl.array.empty(queue, (N,), dtype=np.int32)
@@ -288,19 +295,25 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     cl.enqueue_copy(queue, n_dsri, n_dsri_cl.data)
     del n_dsri_cl
 
+    logger.debug('filling a, b, n buffers (stop)')
+
+    logger.debug('sorting a, b, n buffers (start)')
     for _ in tqdm(range(1), desc='sorting buffers'):
         i = np.argsort(n_dsri)
         n_dsri = n_dsri[i].copy()
         a_dsri = a_dsri[i].copy()
         b_dsri = b_dsri[i].copy()
+    logger.debug('sorting a, b, n buffers (stop)')
 
     # return (n_dsri, a_dsri, b_dsri)
 
+    logger.debug('search sorted (start)')
     # why is this so slow? calling search sorted must have overhead
     # i_n[n] = starting index in a and b corresponding to voxel n
     # j_n[n] = ending   index in a and b corresponding to voxel n
     i_n = np.searchsorted(n_dsri, np.arange(I_n.size), side='left')
     j_n = np.searchsorted(n_dsri, np.arange(I_n.size), side='right')
+    logger.debug('search sorted (stop)')
 
     sym = symmetry.Symmetry(
         I_n.shape[0]//2,
@@ -316,6 +329,7 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     # faster than using np.arange below
     inds0 = np.arange(n_dsri.size)
 
+    logger.debug('solving for I (start)')
     for n in tqdm(n_asy, desc='solving for I'):
         ns = sym.get_symmetry_partners(n)
         inds = np.concatenate([inds0[i_n[ni]: j_n[ni]] for ni in ns])
@@ -348,6 +362,7 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
     O_n[O_n == 0] = 1
     out_n /= O_n
 
+    logger.debug('solving for I (stop)')
     return out_n
 
 

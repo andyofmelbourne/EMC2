@@ -5,7 +5,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def geometry(**config):
+def geometry(
+    cxi_file=None,
+    polarisation=None,
+    model_length=None,
+    pixels_per_voxel=None,
+    zero_padding=None,
+    voxel_cut=None,
+    xyz_offset=None,
+    **config
+):
     """
     calculate:
         - mask   : pixel mask based on config
@@ -16,16 +25,19 @@ def geometry(**config):
     """
 
     # calculate q-values
-    with h5py.File(config['cxi_file']) as f:
+    logger.debug('loading datasets for geometry calculation (start)')
+    with h5py.File(cxi_file) as f:
         mask = f['entry_1/instrument_1/detector_1/good_pixels'][()]
 
         # frames = f['entry_1/data_1/data'].shape[0]
 
         # pixel map
         xyz = f['/entry_1/instrument_1/detector_1/xyz_map'][()]
-        wav = np.mean(
-            f['/entry_1/instrument_1/source_1/photon_wavelength'][()]
-        )
+        # wav = np.mean(
+        #     f['/entry_1/instrument_1/source_1/photon_wavelength'][()]
+        # )
+        # saves time
+        wav = f['/entry_1/instrument_1/source_1/photon_wavelength'][0]
         dx = f['entry_1/instrument_1/detector_1/x_pixel_size'][()]
         dy = f['entry_1/instrument_1/detector_1/y_pixel_size'][()]
 
@@ -35,6 +47,17 @@ def geometry(**config):
             pixel_area = f[key][()]
         else:
             pixel_area = dx * dy
+    logger.debug('loading datasets for geometry calculation (stop)')
+
+    if hasattr(xyz_offset, '__len__'):
+        xyz_offset = np.atleast_2d(xyz_offset)
+
+        xyz_mean_offset = np.mean(xyz_offset, axis=0)
+        xyz[0] += xyz_mean_offset[0]
+        xyz[1] += xyz_mean_offset[1]
+        xyz[2] += xyz_mean_offset[2]
+
+        xyz_offset -= xyz_mean_offset
 
     # calculate pixel radius
     r = np.sum(xyz**2, axis=0)**0.5
@@ -43,11 +66,11 @@ def geometry(**config):
     q /= wav
     qr = np.sum(q**2, axis=0)**0.5
 
-    if config['polarisation'] == 'x':
+    if polarisation == 'x':
         P = 1 - (xyz[0] / r)**2
-    elif config['polarisation'] == 'y':
+    elif polarisation == 'y':
         P = 1 - (xyz[1] / r)**2
-    elif config['polarisation'] == 'None':
+    elif polarisation is None:
         P = np.ones(xyz.shape[1:])
 
     # solid angle correction
@@ -59,7 +82,7 @@ def geometry(**config):
     # scale
     C /= C[mask].max()
 
-    M = config['model_length']
+    M = model_length
     k = 'zero_padding'
     if k in config and config[k]:
         M = M - 2 * config[k]
@@ -76,8 +99,8 @@ def geometry(**config):
         r = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
 
-    elif config['pixels_per_voxel'] and config['model_length']:
-        rp = dx * config['pixels_per_voxel'] * (M // 2)
+    elif pixels_per_voxel and M:
+        rp = dx * pixels_per_voxel * (M // 2)
         z = xyz[2].ravel()[0]
         r = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
@@ -90,32 +113,25 @@ def geometry(**config):
     # calculate model q-space voxel size
     # such that the zero pixel (i0) satisfies:
     #   np.fft.fftshift(np.fft.fftfreq(N))[i0] = 0
-    if config['model_length']:
-        # M = config['model_length']
-
-        if config['pixels_per_voxel']:
-            if (config['model_length'] % 2) == 0:
-                dq = q_max / (M / 2 - 1)
-            else:
-                dq = 2 * q_max / (M - 1)
-
-        # increase qmax for model if required
-        k = 'zero_padding'
-        if k in config and config[k]:
-            q_max_model = q_max + 2 * config[k] * dq
+    if pixels_per_voxel:
+        if (M % 2) == 0:
+            dq = q_max / (M / 2 - 1)
         else:
-            q_max_model = q_max
+            dq = 2 * q_max / (M - 1)
 
-        q_min_model = qr[mask].min()
-
-        logger.debug(f'{q_max=} {q_max_model=}')
-
+    # increase qmax for model if required
+    k = 'zero_padding'
+    if k in config and config[k]:
+        q_max_model = q_max + 2 * config[k] * dq
     else:
-        raise ValueError('need "model_length" to define model voxel size')
+        q_max_model = q_max
 
-    key = 'voxel_cut'
-    if key in config:
-        n, m = config[key]
+    q_min_model = qr[mask].min()
+
+    logger.debug(f'{q_max=} {q_max_model=}')
+
+    if voxel_cut:
+        n, m = voxel_cut
         qmax = q_max_model - m * dq
         qmin = q_min_model + n * dq
 
@@ -123,7 +139,7 @@ def geometry(**config):
         mask[qr < qmin] = False
 
     # location of zero pixel in models along each axis
-    i0 = np.float32(config['model_length']//2)
+    i0 = np.float32(M//2)
 
     out = {
         'mask': mask,
@@ -135,6 +151,7 @@ def geometry(**config):
         'wavelength': wav,
         'q_max': q_max,
         'q_max_model': q_max_model,
-        'q_min_model': q_min_model
+        'q_min_model': q_min_model,
+        'xyz_offset': xyz_offset
     }
     return out
