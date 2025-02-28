@@ -287,11 +287,13 @@ if __name__ == "__main__":
     # show messages vs time
     fig, ax = plt.subplots()
     fig.set_tight_layout(True)
+    fig.set_size_inches(15, 7)
 
     # assign a unique colour for each msg
     colours = {}
 
-    height = 0
+    y = 0
+    ys = []
     for process in processes_sorted:
         if process.msg in colours:
             colour = colours[process.msg]
@@ -299,22 +301,23 @@ if __name__ == "__main__":
             colour = None
 
         rects = ax.barh(
-            height,
+            y,
             process.duration,
+            height=0.6,
             left=process.start_time,
             color=colour
         )
 
         colours[process.msg] = rects.patches[0].get_facecolor()
 
-        height += 1
+        ys.append(y)
+        y += 0.7
 
-    ax.set_yticks(range(0, height))
+    ax.set_yticks(ys)
     ax.set_yticklabels(process.msg for process in processes_sorted)
 
     ax.set_xlabel('time (s)')
     ax.set_axisbelow(True)  # show grid under bar elements
     ax.grid(which='major', axis='y', linestyle='--')
     # ax.set_xlim(0, times.max())
-    plt.tight_layout()
     plt.show()
