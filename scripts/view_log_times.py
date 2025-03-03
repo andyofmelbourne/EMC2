@@ -56,6 +56,19 @@ def get_args():
              '<discard> x total time of the total'
     )
 
+    # parser.add_argument(
+    #     '--group',
+    #     action='store_true',
+    #     help='group messages together if they seem to be a subprocess'
+    # )
+
+    parser.add_argument(
+        '--collapse',
+        action='store_true',
+        help='group messages together if they seem to be a subprocess'
+    )
+
+
     args = parser.parse_args()
     return args
 
@@ -131,25 +144,34 @@ def collapse_pid(processes):
     # loop over unique msgs
     msgs = set(k[0] for k in processes.keys())
     for msg in msgs:
-        # i = active key number
-        for i in range(5):
+        changed = True
+
+        while changed:
+            changed = False
+
             # get keys for this msg
+            # this list will change after each merge
             keys = [key for key in processes if key[0] == msg]
+            K0 = len(keys)
 
-            if i >= len(keys):
-                break
+            # i = active key number
+            for i in range(K0):
+                # loop over processes with msg and join with active process
+                for j in range(K0):
+                    keys = [key for key in processes if key[0] == msg]
+                    K1 = len(keys)
+                    if i >= K1 or j >= K1 or i == j:
+                        continue
 
-            # loop over processes with msg and join with active process
-            for j in range(len(keys)):
-                if (keys[j] in processes and i != j):
                     p1 = processes[keys[i]]
                     p2 = processes[keys[j]]
 
                     if not detect_overlap(p1, p2):
                         join_processes(processes, keys[i], keys[j])
+                        changed = True
 
 
-def collapse_overlap(processes):
+def collapse_overlap_old(processes):
     # loop over unique msgs
     msgs = set(k[0] for k in processes.keys())
     for msg in msgs:
@@ -169,6 +191,47 @@ def collapse_overlap(processes):
 
                     if detect_overlap(p1, p2):
                         merge_processes(processes, keys[i], keys[j])
+
+
+def collapse_overlap(processes):
+    # loop over unique msgs
+    msgs = set(k[0] for k in processes.keys())
+    for msg in msgs:
+        changed = True
+
+        while changed:
+            changed = False
+
+            # get keys for this msg
+            # this list will change after each merge
+            keys = [key for key in processes if key[0] == msg]
+            K0 = len(keys)
+
+            # i = active key number
+            for i in range(K0):
+                # loop over processes with msg and join with active process
+                for j in range(K0):
+                    keys = [key for key in processes if key[0] == msg]
+                    K1 = len(keys)
+                    if i >= K1 or j >= K1 or i == j:
+                        continue
+
+                    p1 = processes[keys[i]]
+                    p2 = processes[keys[j]]
+
+                    if detect_overlap(p1, p2):
+                        merge_processes(processes, keys[i], keys[j])
+                        changed = True
+
+
+def group_processes(processes):
+    """
+    loop over pids
+    if a process starts and stops during the selected
+    process with the same process id then add it as
+    a subprocess and remove the original
+    """
+    pass
 
 
 class Process():

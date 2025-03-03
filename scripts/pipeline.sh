@@ -5,7 +5,12 @@ set -e
 # I like to have many scripts to be called from the command line
 # This leads to more modularity
 
+# working directory
 DIR="$(dirname "$1")"
+
+
+# change working directory to parent of this script
+cd "$(dirname $(dirname ${BASH_SOURCE[0]}))"
 
 iterations=$(python -c "
 from emc2 import input_output
@@ -46,9 +51,9 @@ for fnam in sys.argv[1:]:
     # number of chunks
     chunks = math.ceil((D*R) / chunksize)
     for chunk in range(chunks):
-        print(f'python scripts/calculate_logR.py {fnam} \
-              --data_chunk {chunk} \
-              --data_chunks {chunks}')
+        print(f'python scripts/calculate_logR.py {fnam} '
+              f'--data_chunk {chunk} '
+	      f'--data_chunks {chunks}')
 " ${DIR}/class_*.h5
 }
 export -f logR_cmd
@@ -70,7 +75,8 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 
 	# calculate logR matrix with 1 cpu per chunk
 	# logR_cmd | parallel --delay 1 --verbose --jobs 50% | python emc2/pipe_to_h5.py
-	logR_cmd | parallel --delay 0 --verbose --jobs 50% | python emc2/pipe_to_h5.py
+	# {%} is the slot number (between one and the number of jobs running in parallel)
+	logR_cmd | parallel --delay 0 --verbose --jobs 50% {} --device {%} | python emc2/pipe_to_h5.py
 
 	# calculate P matrix by normalising logR over classes with 8 cpus
 	# this doesn't need to use parallel, it helps a little with loading
@@ -80,9 +86,9 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 
 	if [[ $background == "True" ]]; then
 		for (( i = 0; i < 2; i++ )); do
-			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 4" ::: $(seq 0 3) | python emc2/pipe_to_h5.py
+			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 8" ::: $(seq 0 7) | python emc2/pipe_to_h5.py
 			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
-			parallel --verbose --jobs 1 python scripts/update_I.py ::: ${DIR}/class_*.h5
+			parallel --verbose --jobs 8 python scripts/update_I.py --device {%} {} ::: ${DIR}/class_*.h5
 		done
 	else
 		python scripts/update_w.py ${DIR}/class_*.h5

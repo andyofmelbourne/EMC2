@@ -43,6 +43,28 @@ the (r, i) to n mapping is the same for all classes with the same
 mapping function so it's feasable to store this for 2D classes
 on the order of 20 x 200,000 numbers
 but in 3D with high symmetry this would be a very large dataset
+
+a_nm = F_l[l_nm], l_nm = inv(n_l)
+
+dense, for a given 'n' j --> d, r, m:
+a_ndrm = F_dri[d, r, i_nrm] = P[d, r] K[d, i_nrm]
+
+P[d, r] is sparse, so looping over d means there are only a sub-set of r's to
+process
+
+K[d, i] is sparse, but this is harder to make use of since we have to
+find the common elemnts between non-zero K[d, i] and i_nrm values
+The fix for this would be to store the i'th non-zero elements of K[d, i]
+instead of absolute i index. But this leads to a much bigger index array:
+    i_nrm --> i_ndrm
+    this will not change unless the pixel mask or mapping matrix changes
+    k_ndrm: Ks[d, k] = K[d, inds[d, k]] sparse frame d with all Ks>0
+    a_ndrm = F[d, r, i[n, r, m]] = P[d, r] Ks[d, k[n, d, r, m]]
+
+If every photon is directed to some voxel, then the total size of k
+will be:
+    [k] = R x number of non-zero elements in K_di
+which will be a very large dataset (2D-EMC) ~ 10 Gb
 """
 
 import numpy as np
@@ -196,6 +218,8 @@ def I_update(w_d, I_n, P_dr, K_di, B_di, M_sri, C_i,
         logger.debug(f'there is enough memory to store a, b, n buffers on gpu '
                      f'{mem/1024**3:.2f} gb required '
                      f'{device.global_mem_size/1024**3:.2f} gb available')
+
+    assert (N < np.iinfo(np.int32).max)
 
     # make a and b buffer, gpu or cpu? try gpu
     logger.debug('filling a, b, n buffers (start)')

@@ -45,6 +45,14 @@ def get_args():
     )
 
     parser.add_argument(
+        '--device',
+        type=int,
+        default=0,
+        help='Determines which opencl device to use (will wrap if device >\
+        total).'
+    )
+
+    parser.add_argument(
         '-o', '--output',
         type=argparse.FileType('wb'),
         default=sys.stdout.buffer,
@@ -121,7 +129,7 @@ if __name__ == "__main__":
     )
 
     # load opencl
-    opencl_stuff = utils_cl.opencl_init(device_no=args.data_chunk)
+    opencl_stuff = utils_cl.opencl_init(device_no=args.device)
 
     if class_c.frame_model == 'background':
         logR_dr = main_background(

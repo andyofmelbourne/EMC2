@@ -123,6 +123,14 @@ def get_args():
     )
 
     parser.add_argument(
+        '--device',
+        type=int,
+        default=0,
+        help='Determines which opencl device to use (will wrap if device >\
+        total).'
+    )
+
+    parser.add_argument(
         '-o', '--output',
         type=argparse.FileType('wb'),
         default=sys.stdout.buffer,
@@ -339,7 +347,7 @@ if __name__ == "__main__":
 
     # calculate model voxel indices for each r,i pair
     # -----------------------------------------------
-    opencl_stuff = utils_cl.opencl_init()
+    opencl_stuff = utils_cl.opencl_init(args.device)
 
     # initialise mapper: r,i -> s,n
     mapper = tomograms.Mapper(
