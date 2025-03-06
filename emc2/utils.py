@@ -286,15 +286,20 @@ class Geom_corr():
     def __init__(
         self,
         geom_fnam='/home/andyofmelbourne/Documents'
-                  '/git_repos/xfel7927/geom/r0600.geom'
+                  '/git_repos/xfel7927/geom/r0600.geom',
+        return_centre=False
     ):
         # can we do this inside __init__?
         import extra_geom
         self.geom = extra_geom.AGIPD_1MGeometry.from_crystfel_geom(geom_fnam)
+        self.return_centre = return_centre
 
     def apply(self, ar):
-        out = self.geom.position_modules(ar)[0]
-        return out
+        out, centre = self.geom.position_modules(ar)
+        if self.return_centre:
+            return out, centre
+        else:
+            return out
 
 
 class Geom_corr_masked():

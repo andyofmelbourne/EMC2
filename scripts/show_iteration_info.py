@@ -212,8 +212,13 @@ def show_frames(cxi_fnam, sparse_fnam, frames, iteration=0, max_frames=500):
             frames[i] = f['entry_1/data_1/data'][d]
 
         print('applying geometry to images')
-        ims = utils.Geom_corr().apply(frames)
-        pg.show(ims)
+        ims, centre = utils.Geom_corr(return_centre=True).apply(frames)
+        im = pg.show(ims)
+        centre[0] -= 400e-6/200e06
+        centre[1] -= 4800e-6/200e06
+        # transposed b/c of row-major setting
+        c = pg.CircleROI(centre[::-1], [1, 1], pen=pg.mkPen('r', width=2))
+        im.addItem(c)
 
 
 def write_good_frames(
@@ -261,7 +266,7 @@ class ImageView(pg.ImageView):
         self.scatter_hover = None
         self.occ_c = None
         self.most_likely_model_d = None
-        self.iteration = 1
+        self.iteration = 0
         self.pow = 1
 
         self.update_plots()

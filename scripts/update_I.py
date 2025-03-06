@@ -335,6 +335,9 @@ if __name__ == "__main__":
     class_c = classes.Class()
     class_c.load(args.class_file, skip=['probability_matrix'])
 
+    logger.info(f'mean wsums for class {class_c.class_id}: '
+                f'{np.mean(class_c.wsums)}')
+
     # testing
     # class_c.frame_model = 'basic'
     # class_c.symmetry = 'P1'
@@ -372,7 +375,10 @@ if __name__ == "__main__":
     )
     I = K_di_getter.shape[1]
 
-    if class_c.frame_model == 'basic':
+    if (
+        class_c.frame_model == 'basic'
+        or class_c.frame_model == 'fluence'
+    ):
         I_n = main(
             args.class_file,
             mapper,
@@ -417,7 +423,7 @@ if __name__ == "__main__":
     rms = np.mean((I0_n - I_n)**2)**0.5
     logger.info(f'rms difference for model {class_c.class_id}: {rms}')
 
-    logger.info(f'{np.mean(I0_n)=} --> {np.mean(I_n)=}')
+    logger.info(f'class_c.class_id: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
 
     # save
     with h5py.File(args.class_file, 'r+') as f:

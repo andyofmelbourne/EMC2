@@ -92,6 +92,7 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 		done
 	else
 		python scripts/update_w.py ${DIR}/class_*.h5
+
 		parallel --verbose --jobs 50% python scripts/update_I.py --numpy --r_chunk_size 1024 ::: ${DIR}/class_*.h5
 	fi
 	python scripts/save_model_slices.py ${DIR}/class_*.h5

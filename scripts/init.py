@@ -73,6 +73,9 @@ def add_geometry(classes):
     logger.info('calculating mask and pixel geometry')
     for class_c in classes:
         geom = geometry.geometry(**class_c)
+        geom = geometry.geometry(
+            voxel_cut=(0, class_c['zero_padding']),
+            **class_c)
 
         class_c.update(geom)
 
@@ -94,7 +97,7 @@ def add_geometry(classes):
 def check_data(config):
     logger.debug('checking data (start)')
     for class_c in config['classes']:
-        K_prob_di = data_getter.Data_getter(
+        data_getter.Data_getter(
             mask=class_c['P_mask'],
             split_frames=config['split_frames'],
             cxi_file=config['cxi_file'],
@@ -104,12 +107,7 @@ def check_data(config):
             delay_data_load=True
         )
 
-        with h5py.File(K_prob_di.sparse_fnam) as f:
-            class_c['ksums'] = f['photon_sums'][()]
-            class_c['frame_selection'] = f['frames'][()]
-            class_c['frames'] = f['frames'].shape[0]
-
-        data_getter.Data_getter(
+        K_di = data_getter.Data_getter(
             mask=class_c['mask'],
             split_frames=config['split_frames'],
             cxi_file=config['cxi_file'],
@@ -118,6 +116,12 @@ def check_data(config):
             working_directory=config['working_directory'],
             delay_data_load=True
         )
+
+        with h5py.File(K_di.sparse_fnam) as f:
+            class_c['ksums'] = f['photon_sums'][()]
+            class_c['frame_selection'] = f['frames'][()]
+            class_c['frames'] = f['frames'].shape[0]
+
     logger.debug('checking data (stop)')
 
 
@@ -230,6 +234,7 @@ def save_classes(c):
     )
 
     c['wsums'] = np.zeros((T_sr.shape[1]), dtype=float)
+    c['P_wsums'] = np.zeros((T_sr.shape[1]), dtype=float)
 
     config['iteration'] = 0
 

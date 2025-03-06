@@ -59,6 +59,7 @@ default = {
     'P_xyz': None,
     'C': None,
     'wsums': None,
+    'P_wsums': None,
     'ksums': None,
     'orientation_index_r': None,
     'x_offset_r': None,

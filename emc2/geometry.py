@@ -10,7 +10,7 @@ def geometry(
     polarisation=None,
     model_length=None,
     pixels_per_voxel=None,
-    zero_padding=None,
+    # zero_padding=None,
     voxel_cut=None,
     xyz_offset=None,
     **config
@@ -23,6 +23,7 @@ def geometry(
         - q_max  : 1 / full period resolution limit within pixel mask
         - C      : the solid angle and polarisation correction factor
     """
+    zero_padding = None
 
     # calculate q-values
     logger.debug('loading datasets for geometry calculation (start)')
@@ -83,9 +84,12 @@ def geometry(
     C /= C[mask].max()
 
     M = model_length
-    k = 'zero_padding'
-    if k in config and config[k]:
-        M = M - 2 * config[k]
+
+    # zero padding:
+    # calculate the pixel mask with "zero padding" voxels subtracted
+    # from each dimension of the model
+    if zero_padding:
+        M = M - 2 * zero_padding
 
     if 'q_max' in config and config['q_max']:
         q_max = config['q_max']
@@ -120,13 +124,14 @@ def geometry(
             dq = 2 * q_max / (M - 1)
 
     # increase qmax for model if required
-    k = 'zero_padding'
-    if k in config and config[k]:
-        q_max_model = q_max + 2 * config[k] * dq
+    q_min_model = qr[mask].min()
+
+    if zero_padding:
+        q_max_model = q_max + zero_padding * dq
+        q_min_model -= zero_padding * dq
+        q_min_model = min(0., q_min_model)
     else:
         q_max_model = q_max
-
-    q_min_model = qr[mask].min()
 
     logger.debug(f'{q_max=} {q_max_model=}')
 

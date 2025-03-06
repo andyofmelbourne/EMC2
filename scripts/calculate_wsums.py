@@ -58,45 +58,55 @@ if __name__ == "__main__":
     # load opencl
     opencl_stuff = utils_cl.opencl_init(device_no=args.rot_chunk)
 
-    # initialise tomograms
-    mapper = tomograms.Mapper(
-        class_c.model.ndim,
-        class_c.model.shape[0],
-        class_c.P_xyz,
-        class_c.mapping_matrix,
-        opencl_stuff['context'],
-        opencl_stuff['queue'],
-        interpolation=class_c.interpolation_forward
-    )
+    for i in range(2):
+        if i == 0:
+            xyz = class_c.P_xyz
+            C = class_c.P_C
+            out = 'P_wsums'
+        elif i == 1:
+            xyz = class_c.xyz
+            C = class_c.C
+            out = 'wsums'
 
-    W_ri = tomograms.Tomograms(mapper, class_c.model)
+        # initialise tomograms
+        mapper = tomograms.Mapper(
+            class_c.model.ndim,
+            class_c.model.shape[0],
+            xyz,
+            class_c.mapping_matrix,
+            opencl_stuff['context'],
+            opencl_stuff['queue'],
+            interpolation=class_c.interpolation_forward
+        )
 
-    R = W_ri.shape[0]
+        W_ri = tomograms.Tomograms(mapper, class_c.model)
 
-    if args.rot_chunk is not None:
-        if not args.rot_chunks:
-            raise ValueError('must specify total number of rot_chunks')
-        r0, r1, dr = utils.chunker_mpi(args.rot_chunks, R)
-        r0 = r0[args.rot_chunk]
-        r1 = r1[args.rot_chunk]
-        dr = dr[args.rot_chunk]
-    else:
-        r0, r1, dr = 0, R, R
+        R = W_ri.shape[0]
 
-    logger.info('calculating tomogram sums')
-    wsums_r = probability.calculate_wsums_r(class_c.P_C, W_ri, r0, r1)
-    logger.info('finished calculating tomogram sums')
+        if args.rot_chunk is not None:
+            if not args.rot_chunks:
+                raise ValueError('must specify total number of rot_chunks')
+            r0, r1, dr = utils.chunker_mpi(args.rot_chunks, R)
+            r0 = r0[args.rot_chunk]
+            r1 = r1[args.rot_chunk]
+            dr = dr[args.rot_chunk]
+        else:
+            r0, r1, dr = 0, R, R
 
-    # save
-    def write():
-        try:
-            with h5py.File(args.class_file, 'r+') as f:
-                f['wsums'][r0: r1] = wsums_r
+        logger.info('calculating tomogram sums')
+        wsums_r = probability.calculate_wsums_r(C, W_ri, r0, r1)
+        logger.info('finished calculating tomogram sums')
 
-        except OSError:
-            logger.debug('waiting to try writing to file again')
-            time.sleep(np.random.random())
-            write()
+        # save
+        def write():
+            try:
+                with h5py.File(args.class_file, 'r+') as f:
+                    f[out][r0: r1] = wsums_r
 
-    write()
-    logger.info('calculate_wsums (stop)')
+            except OSError:
+                logger.debug('waiting to try writing to file again')
+                time.sleep(np.random.random())
+                write()
+
+        write()
+        logger.info('calculate_wsums (stop)')

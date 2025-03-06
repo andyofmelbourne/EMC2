@@ -137,7 +137,7 @@ if __name__ == "__main__":
             K_di,
             class_c.P_C,
             class_c.relative_fluence,
-            class_c.wsums,
+            class_c.P_wsums,
             class_c.mapping_matrix,
             class_c.P_xyz,
             opencl_stuff['context'],
@@ -164,7 +164,7 @@ if __name__ == "__main__":
             W_ri,
             class_c.P_C,
             class_c.relative_fluence,
-            class_c.wsums,
+            class_c.P_wsums,
             class_c.likelihood,
             class_c.frame_model
         )
