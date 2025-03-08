@@ -81,9 +81,6 @@ if __name__ == '__main__':
     class_0 = classes.Class()
     class_0.load(class_files[0])
 
-    # testing
-    # class_0.frame_model = 'background'
-
     # load data
     logger.info(f'loading frames with frame_model={class_0.frame_model}')
     K_di = data_getter.Data_getter(

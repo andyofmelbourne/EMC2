@@ -129,7 +129,6 @@ def to_gpu_2D_image(ar, queue=None, context=None):
     )
     return I_cl
 
-
 def to_gpu_3D_image(ar, queue=None, context=None):
     # copy I as an opencl "image" for trilinear sampling
     image_format = cl.ImageFormat(cl.channel_order.R, cl.channel_type.FLOAT)

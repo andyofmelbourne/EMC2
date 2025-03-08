@@ -21,7 +21,8 @@ dset_counts  = '/entry_1/instrument_1/detector_1/photon_counts'
 dset_frames  = '/entry_1/data_1/data'
 geom_fnam    = '/home/andyofmelbourne/Documents/git_repos/xfel7927/geom/r0600.geom'
 
-fnams  = ['/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi']
+#fnams  = ['/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi']
+fnams  = ['/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi']
 
 #geom = extra_geom.DSSC_1MGeometry.from_crystfel_geom(geom_fnam)
 geom = extra_geom.AGIPD_1MGeometry.from_crystfel_geom(geom_fnam)

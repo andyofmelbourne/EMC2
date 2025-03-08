@@ -338,11 +338,6 @@ if __name__ == "__main__":
     logger.info(f'mean wsums for class {class_c.class_id}: '
                 f'{np.mean(class_c.wsums)}')
 
-    # testing
-    # class_c.frame_model = 'basic'
-    # class_c.symmetry = 'P1'
-    # class_c.mapping_matrix = class_c.mapping_matrix[:1]
-
     I0_n = class_c.model.copy()
 
     if class_c.update_model is False:
@@ -424,6 +419,9 @@ if __name__ == "__main__":
     logger.info(f'rms difference for model {class_c.class_id}: {rms}')
 
     logger.info(f'class_c.class_id: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
+
+    # test
+    # I_n = np.clip(I_n, 1e-8, None)
 
     # save
     with h5py.File(args.class_file, 'r+') as f:

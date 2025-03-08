@@ -71,7 +71,9 @@ class ThreadQueue():
         self.executor.shutdown()
 
 
-def solve_axbc(a, b, c, fill_value = 0., ftol = 1e-2, xtol = 1e-3, maxiters = 1000, algorithm = 'Halley', debug = False):
+def solve_axbc(a, b, c, fill_value=0.,
+               ftol=1e-2, xtol=1e-3, maxiters=1000,
+               algorithm='Halley', debug=False):
     """
     find the root of sum_i a_i / (x + b_i) - c = 0
 
@@ -636,9 +638,23 @@ def save_iteration_info(
                 maxshape=(None,),
                 dtype=np.float32
             )
+
+            f.create_dataset(
+                'orientation_changes',
+                shape=(1,),
+                maxshape=(None,),
+                dtype=np.int32
+            )
+
+            f.create_dataset(
+                'class_changes',
+                shape=(1,),
+                maxshape=(None,),
+                dtype=np.int32
+            )
     else:
         # resize
-        keys = ['beta', 'Q', 'P_gini']
+        keys = ['beta', 'Q', 'P_gini', 'orientation_changes', 'class_changes']
         with h5py.File(fnam, 'r+') as f:
             for key in keys:
                 f[key].resize(N+1, axis=0)
@@ -662,6 +678,23 @@ def save_iteration_info(
         f['beta'][N] = beta
         f['Q'][N] = np.mean(Q_d)
         f['P_gini'][N] = np.mean(P_max_d)
+
+        # write differences
+        if N > 0:
+            k0 = f'iteration_{N-1}'
+            g0 = f[k0]
+            mlm_d0 = g0['most_likely_model_d'][()]
+            mlm_d1 = class_max_d
+            dc = np.sum(mlm_d0 != mlm_d1)
+            f['class_changes'][N] = dc
+
+            mlo_d0 = g0['most_likely_orientation_d'][()]
+            mlo_d1 = local_rmax_d
+            do = np.sum(mlo_d0 != mlo_d1)
+            f['orientation_changes'][N] = do
+        else:
+            f['class_changes'][N] = Q_d.shape[0]
+            f['orientation_changes'][N] = Q_d.shape[0]
 
     return True
 

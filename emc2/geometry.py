@@ -52,30 +52,32 @@ def geometry(
 
     if hasattr(xyz_offset, '__len__'):
         xyz_offset = np.atleast_2d(xyz_offset)
-
         xyz_mean_offset = np.mean(xyz_offset, axis=0)
-        xyz[0] += xyz_mean_offset[0]
-        xyz[1] += xyz_mean_offset[1]
-        xyz[2] += xyz_mean_offset[2]
+    else:
+        xyz_mean_offset = np.array([0, 0, 0], dtype=float)
 
-        xyz_offset -= xyz_mean_offset
+    # centre the pixel mask around offsets
+    d_xyz = xyz.copy()
+    d_xyz[0] -= xyz_mean_offset[0]
+    d_xyz[1] -= xyz_mean_offset[1]
+    d_xyz[2] -= xyz_mean_offset[2]
 
     # calculate pixel radius
-    r = np.sum(xyz**2, axis=0)**0.5
-    q = xyz.copy() / r
+    r = np.sum(d_xyz**2, axis=0)**0.5
+    q = d_xyz.copy() / r
     q[2] -= 1
     q /= wav
     qr = np.sum(q**2, axis=0)**0.5
 
     if polarisation == 'x':
-        P = 1 - (xyz[0] / r)**2
+        P = 1 - (d_xyz[0] / r)**2
     elif polarisation == 'y':
-        P = 1 - (xyz[1] / r)**2
+        P = 1 - (d_xyz[1] / r)**2
     elif polarisation is None:
-        P = np.ones(xyz.shape[1:])
+        P = np.ones(d_xyz.shape[1:])
 
     # solid angle correction
-    Omega = pixel_area * xyz[2] / r**3
+    Omega = pixel_area * d_xyz[2] / r**3
 
     # merged intensity to frame correction factor
     C = Omega * P
@@ -99,13 +101,13 @@ def geometry(
 
     elif 'pixel_radius' in config and config['pixel_radius']:
         rp = config['pixel_radius']
-        z = xyz[2].ravel()[0]
+        z = d_xyz[2].ravel()[0]
         r = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
 
     elif pixels_per_voxel and M:
         rp = dx * pixels_per_voxel * (M // 2)
-        z = xyz[2].ravel()[0]
+        z = d_xyz[2].ravel()[0]
         r = (rp**2 + z**2)**0.5
         q_max = (rp**2 + (z-r)**2)**0.5 / wav / r
 

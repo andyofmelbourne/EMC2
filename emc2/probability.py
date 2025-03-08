@@ -91,6 +91,7 @@ def calculate_K_dot_W(W_ri, K_di, r_chunk_size=1024, d_chunk_size=256):
     R, _ = W_ri.shape
     P_dr = np.zeros((D, R), dtype=float)
     W_ri.set_log(True)
+    W_ri.cpu = False
 
     def dot(P_dr, K, W_cl, d0, d1, r0, r1):
         W = W_cl.get()
@@ -107,7 +108,7 @@ def calculate_K_dot_W(W_ri, K_di, r_chunk_size=1024, d_chunk_size=256):
         leave=False
     )
 
-    max_depth = 4
+    max_depth = 1
 
     executor = ThreadPoolExecutor()
     dot_events = []
@@ -139,12 +140,13 @@ def calc_logR(K_di, W_ri, C_i, w_d, wsums_r, **config):
     # calculate KW_dr = sum_i K_di W_ri
     # P_dr1 = calculate_K_dot_W(W_ri, K_di)
     P_dr = calculate_K_dot_W_gpu(W_ri, K_di)
+    # assert (np.allclose(P_dr1, P_dr))
 
     # get cpu context and queue
     cl_cpu_stuff = utils_cl.opencl_init_cpu(0)
     queue_cpu = cl_cpu_stuff['queue']
 
-    logger.debug('\nCompiling cpu code for offset and normalisation of P_dr')
+    logger.debug('\nCompiling cpu code for offset of P_dr')
     cl_cpu_code = cl.Program(
         cl_cpu_stuff['context'],
         code.format(rotations=R)

@@ -100,12 +100,17 @@ def get_plots(fnam, iteration):
         plots.append(f['P_gini'][()])
         titles.append('gini coefficient of P')
 
-        g = f[k]
-        plots.append(np.sort(g['P_gini_d'][()])[::-1])
-        titles.append('P gini coefficient per frame')
+        plots.append(f['orientation_changes'][()])
+        titles.append('orientation changes')
 
-        plots.append(np.sort(g['Q_d'][()])[::-1])
-        titles.append('P logR per frame')
+        plots.append(f['class_changes'][()])
+        titles.append('class changes')
+
+        g = f[k]
+        # plots.append(np.sort(g['P_gini_d'][()])[::-1])
+        # titles.append('P gini coefficient per frame')
+        # plots.append(np.sort(g['Q_d'][()])[::-1])
+        # titles.append('P logR per frame')
 
         # plots.append(np.sort(np.bincount(g['most_likely_model_d'][()])[::-1]))
         # plots.append(np.sort(g['occupancy_r'][()])[::-1])
@@ -267,7 +272,7 @@ class ImageView(pg.ImageView):
         self.occ_c = None
         self.most_likely_model_d = None
         self.iteration = 0
-        self.pow = 1
+        self.pow = 0.2
 
         self.update_plots()
 

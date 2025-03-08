@@ -87,7 +87,7 @@ __kernel void mapping_3D_v0 (
 }}
 
 
-// return raveled voxel coordinates
+// return ravelled voxel coordinates
 __kernel void mapping_2D_n(
     global int *out_n,
     global float4 *M,
