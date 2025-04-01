@@ -575,7 +575,14 @@ def save_model_slices(
 
 
 def write_h5(f, k, v, compression=True, chunks=None):
-    if not hasattr(v, 'shape') or isinstance(v, str):
+    if compression:
+        compression = 'gzip'
+    else:
+        compression = None
+
+    if not hasattr(v, 'shape') or len(v.shape) == 0:
+        if k in f:
+            del f[k]
         f[k] = v
     else:
         if k in f:
@@ -587,7 +594,7 @@ def write_h5(f, k, v, compression=True, chunks=None):
         if k not in f:
             if not chunks:
                 chunks = v.shape
-            f.create_dataset(k, data=v, chunks=chunks, compression='gzip')
+            f.create_dataset(k, data=v, chunks=chunks, compression=compression)
 
 
 def save_iteration_info(
@@ -683,14 +690,21 @@ def save_iteration_info(
         if N > 0:
             k0 = f'iteration_{N-1}'
             g0 = f[k0]
+
             mlm_d0 = g0['most_likely_model_d'][()]
             mlm_d1 = class_max_d
-            dc = np.sum(mlm_d0 != mlm_d1)
+
+            # if the number of patterns has changed
+            # numbers might be rubish
+            D = min(mlm_d0.shape[0], mlm_d1.shape[0])
+            dc = np.sum(mlm_d0[:D] != mlm_d1[:D])
             f['class_changes'][N] = dc
 
             mlo_d0 = g0['most_likely_orientation_d'][()]
             mlo_d1 = local_rmax_d
-            do = np.sum(mlo_d0 != mlo_d1)
+
+            D = min(mlo_d0.shape[0], mlo_d1.shape[0])
+            do = np.sum(mlo_d0[:D] != mlo_d1[:D])
             f['orientation_changes'][N] = do
         else:
             f['class_changes'][N] = Q_d.shape[0]
