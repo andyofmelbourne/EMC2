@@ -3,6 +3,7 @@ import sys
 import pickle
 import h5py
 import numpy as np
+import time
 
 from utils import MyFormatter
 
@@ -103,10 +104,19 @@ def write_package(msg):
         mode = 'a'
 
     # open file
-    with h5py.File(file, mode=mode) as f:
-        for k, v in msg.items():
-            data, s = check_key_value(k, v, mode)
-            write_to_h5(f, k, data, s)
+    def write():
+        try:
+            with h5py.File(file, mode=mode) as f:
+                for k, v in msg.items():
+                    data, s = check_key_value(k, v, mode)
+                    write_to_h5(f, k, data, s)
+
+        except OSError:
+            time.sleep(np.random.random())
+            write()
+
+    # why do I have to do this?!
+    write()
 
 
 if __name__ == '__main__':
