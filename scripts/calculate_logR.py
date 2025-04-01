@@ -112,7 +112,13 @@ if __name__ == "__main__":
 
     # load class file
     class_c = classes.Class()
-    class_c.load(args.class_file)
+    class_c.load(args.class_file, skip=['probability_matrix'])
+
+    if class_c.update_probability:
+        logger.info('update_probability is True, updating logR')
+    else:
+        logger.info('update_probability is False, skipping logR update')
+        sys.exit()
 
     mpi_split_frames = (args.data_chunk, args.data_chunks)
 
@@ -128,6 +134,9 @@ if __name__ == "__main__":
         frame_model=class_c.frame_model
     )
 
+    d0 = K_di.d_start_mpi[args.data_chunk]
+    d1 = K_di.d_stop_mpi[args.data_chunk]
+
     # load opencl
     opencl_stuff = utils_cl.opencl_init(device_no=args.device)
 
@@ -136,7 +145,7 @@ if __name__ == "__main__":
             class_c.model,
             K_di,
             class_c.P_C,
-            class_c.relative_fluence,
+            class_c.relative_fluence[d0: d1],
             class_c.P_wsums,
             class_c.mapping_matrix,
             class_c.P_xyz,
@@ -163,7 +172,7 @@ if __name__ == "__main__":
             K_di,
             W_ri,
             class_c.P_C,
-            class_c.relative_fluence,
+            class_c.relative_fluence[d0: d1],
             class_c.P_wsums,
             class_c.likelihood,
             class_c.frame_model
@@ -173,8 +182,6 @@ if __name__ == "__main__":
 
     # pipe to std out
     file = sys.stdout.buffer
-    d0 = K_di.d_start_mpi[args.data_chunk]
-    d1 = K_di.d_stop_mpi[args.data_chunk]
     logger.info(f'writing logR chunk {d0}-{d1} to {args.class_file}')
     msg = {
         'file': args.class_file,
