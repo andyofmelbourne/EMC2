@@ -56,6 +56,8 @@ def geometry(
     else:
         xyz_mean_offset = np.array([0, 0, 0], dtype=float)
 
+    logger.debug(f'centre pixel mask around mean offset {xyz_mean_offset}')
+
     # centre the pixel mask around offsets
     d_xyz = xyz.copy()
     d_xyz[0] -= xyz_mean_offset[0]
@@ -90,8 +92,10 @@ def geometry(
     # zero padding:
     # calculate the pixel mask with "zero padding" voxels subtracted
     # from each dimension of the model
+    logger.debug(f'model length: {M}')
     if zero_padding:
         M = M - 2 * zero_padding
+    logger.debug(f'model length after zero_padding: {M}')
 
     if 'q_max' in config and config['q_max']:
         q_max = config['q_max']
@@ -119,11 +123,18 @@ def geometry(
     # calculate model q-space voxel size
     # such that the zero pixel (i0) satisfies:
     #   np.fft.fftshift(np.fft.fftfreq(N))[i0] = 0
-    if pixels_per_voxel:
-        if (M % 2) == 0:
-            dq = q_max / (M / 2 - 1)
-        else:
-            dq = 2 * q_max / (M - 1)
+    if (M % 2) == 0:
+        dq = q_max / (M / 2 - 1)
+    else:
+        dq = 2 * q_max / (M - 1)
+
+    logger.debug(f'q-space voxel size of model: {dq}')
+
+    z = d_xyz[2].ravel()[0]
+    dq_pixel = np.array([dx, z]) / (dx**2 + z**2)**0.5 - np.array([0, 1])
+    dq_pixel /= wav
+    dq_pixel = np.linalg.norm(dq_pixel)
+    logger.debug(f'approx. q-space extent of pixel: {dq_pixel}')
 
     # increase qmax for model if required
     q_min_model = qr[mask].min()
@@ -135,8 +146,7 @@ def geometry(
     else:
         q_max_model = q_max
 
-    logger.debug(f'{q_max=} {q_max_model=}')
-
+    logger.debug(f'{voxel_cut=}')
     if voxel_cut:
         n, m = voxel_cut
         qmax = q_max_model - m * dq
@@ -144,6 +154,8 @@ def geometry(
 
         mask[qr > qmax] = False
         mask[qr < qmin] = False
+
+    logger.debug(f'{q_max=} {q_max_model=} qmax_mask={qmax}')
 
     # location of zero pixel in models along each axis
     i0 = np.float32(M//2)
@@ -153,7 +165,7 @@ def geometry(
         'C': np.ascontiguousarray(C[mask].astype(np.float32)),
         'q': np.ascontiguousarray(q[:, mask].astype(np.float32)),
         'xyz': np.ascontiguousarray(xyz[:, mask].astype(np.float32)),
-        'dq': np.float32(dq),
+        'dq': dq,
         'i0': i0,
         'wavelength': wav,
         'q_max': q_max,
