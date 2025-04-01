@@ -34,7 +34,7 @@ def opencl_init(device_no=0):
 
     device = devices[device_no % len(devices)]
 
-    context = cl.Context(devices)
+    context = cl.Context([device])
 
     # one queue for each device (maybe make 2 per device later)
     queue = cl.CommandQueue(context, device)
