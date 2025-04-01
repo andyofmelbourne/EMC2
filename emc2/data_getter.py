@@ -189,7 +189,7 @@ class Data_getter():
 
         # check if the filter or mask has changed
         if self.sparse_file is True:
-            logger.debug('checking existing sparse file...')
+            logger.debug(f'checking existing sparse file: {self.sparse_fnam}')
             self.sparse_file = self.check_sparse()
             logger.debug(self.sparse_file)
 
@@ -243,6 +243,8 @@ class Data_getter():
                 and self.filter.shape[0] == f[self.dataset].shape[0]
             ):
                 frames = np.where(self.filter)[0]
+            elif np.issubdtype(self.filter.dtype, np.integer):
+                frames = self.filter
             else:
                 frames = np.arange(f[self.dataset].shape[0])
 
@@ -439,7 +441,7 @@ class Data_getter():
                     self.background_inds = f['background_inds'][d0:d1]
                     self.background_weighting = \
                         f['background_weighting'][d0:d1]
-                    self.background_sums = f['background_sums'][()]
+                    self.background_sums = f['background_sums'][d0:d1]
 
         self.total_frames = total_frames
         self.d_start_mpi = d_start
