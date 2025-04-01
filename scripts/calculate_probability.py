@@ -37,7 +37,7 @@ def get_args():
     parser.add_argument(
         '--frame_chunk_size',
         type=int,
-        default=1024,
+        default=4096,
         help='loop over frame chunks to reduce memory consumption'
     )
     args = parser.parse_args()
@@ -120,14 +120,10 @@ def normalise_P_dr(
     logR_dr,
     class_r,
     beta,
-    P_thresh
+    P_thresh,
+    cl_cpu_code,
+    queue
 ):
-
-    # load opencl on cpu then compile
-    cl_cpu = utils_cl.opencl_init_cpu()
-    code = get_code()
-    cl_cpu_code = cl.Program(cl_cpu['context'], code).build()
-
     D, R = logR_dr.shape
 
     models = np.max(class_r)+1
@@ -144,7 +140,8 @@ def normalise_P_dr(
     d_chunk_size = max(1, int(os.cpu_count()/2))
     d_iter = tqdm(
         utils.chunker(d_chunk_size, D),
-        desc='calculating P_dr from logR'
+        desc='calculating P_dr from logR',
+        disable=True
     )
 
     P_dr = np.empty_like(logR_dr)
@@ -154,7 +151,7 @@ def normalise_P_dr(
 
     for d0, d1, dd in d_iter:
         cl_cpu_code.normalise_P_dr(
-            cl_cpu['queue'],
+            queue,
             (dd,),
             None,
             cl.SVM(logR_dr),
@@ -171,7 +168,7 @@ def normalise_P_dr(
             np.int32(R),
         )
 
-    cl_cpu['queue'].finish()
+    queue.finish()
 
     return P_dr, rmax_d, Pmax_d, occupancy_dc, Q_d
 
@@ -219,6 +216,8 @@ if __name__ == '__main__':
     assert (np.allclose(Ds, D))
     R = np.sum(Rs)
 
+    args.frame_chunk_size = min(args.frame_chunk_size, D)
+
     d_iter = tqdm(
         utils.chunker(args.frame_chunk_size, D),
         desc='calculating P_dr over frame chunks'
@@ -242,6 +241,11 @@ if __name__ == '__main__':
             local_r[r0: r1] = np.arange(Rs[c])
             index = r1
 
+    # load opencl on cpu then compile
+    cl_cpu = utils_cl.opencl_init_cpu()
+    code = get_code()
+    cl_cpu_code = cl.Program(cl_cpu['context'], code).build()
+
     for d0, d1, dd in d_iter:
         # Load P_dr for frame selection
         index = 0
@@ -257,7 +261,9 @@ if __name__ == '__main__':
                 logR_dr[:dd],
                 class_r,
                 beta,
-                P_thresh
+                P_thresh,
+                cl_cpu_code,
+                cl_cpu['queue']
             )
 
         assert (np.all(np.isfinite(P_dr[:dd])))
@@ -274,8 +280,13 @@ if __name__ == '__main__':
         for c, fnam in enumerate(class_files):
             r0, r1 = index, index + Rs[c]
             with h5py.File(fnam, 'r+') as f:
-                f['probability_matrix'][d0:d1] = P_dr[:dd, r0:r1]
-                f['beta'][...] = beta
+                update_probability = f['update_probability'][()]
+                if update_probability:
+                    f['probability_matrix'][d0:d1] = P_dr[:dd, r0:r1]
+                    f['beta'][...] = beta
+                else:
+                    logger.info('update_probability is False '
+                                f'skipping update for class {c}')
             index = r1
 
     # get sparse fnam (must be an easier way to do this...)
