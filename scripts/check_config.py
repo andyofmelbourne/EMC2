@@ -222,11 +222,6 @@ if __name__ == '__main__':
     if args.skip_data:
         update_data = False
 
-    # test
-    update_geometry = True
-    update_model = True
-    update_mapping = True
-
     update = any([update_geometry, update_model, update_data, update_mapping])
 
     logger.debug(f'{args.prob=}')
