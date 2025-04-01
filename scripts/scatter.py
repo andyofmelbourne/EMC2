@@ -8,23 +8,23 @@ import signal
 from pathlib import Path
 import pyqtgraph.exporters
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/3D-EMC/Ery_maxwell/iteration_info.h5'
-#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
-cxi_file = None
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+# cxi_file = None
 
 #fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
 #cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
 labels_key = '/manual_selection'
 #iteration = 484
-iteration = 1
+iteration = 0
 
-# load labels if any 
+# load labels if any
 labels = None
 if cxi_file and Path(cxi_file).is_file():
     # find cache
     a = Path(fnam).parent.joinpath('cachdir')
     stem = Path(cxi_file).stem
-    b = list(a.glob(f'{stem}*sparse.h5'))
+    b = list(a.glob(f'{stem}*sparse*.h5'))
     
     data_file = None
     if len(b) == 1 :
@@ -99,34 +99,35 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.exporter = pg.exporters.ImageExporter(self.scene())
         self.exporter.parameters()['width'] = 800
         self.exporter.parameters()['height'] = 800
-        
+
         self.iteration = iteration
-        
+
         # get data
         self.update_plots(iteration)
-        
-    
+
+
     def keyPressEvent(self, event):
         super(GraphicsLayoutWidget, self).keyPressEvent(event)
         key = keys_mapping[event.key()]
         #print("key press", key)
-        
+
         if key == 'Right' :
             self.update_plots(self.iteration + 1)
-        
+
         elif key == 'Left' :
             self.update_plots(self.iteration - 1)
 
         elif key == 'S' :
             self.exporter.export(f'scatter_{self.iteration:>04}.tif')
-    
+
     def update_plots(self, iteration):
         # get plots
         occ_2d = get_plots(fnam, iteration)
 
         if occ_2d is None :
-            return 
-        
+            self.update_plots(0)
+            return
+
         self.iteration = iteration
 
         x = occ_2d[:, 0]
@@ -144,7 +145,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             data = np.arange(unit_vectors.shape[0])
         )
         self.scatter.addItem(sc)
-        
+
         # show labels if any
         if labels : 
             self.scatter.addLegend()
@@ -152,7 +153,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                 xl = x[label_inds]
                 yl = y[label_inds]
                 self.scatter.plot(xl, yl, pen = None, symbolPen=None, symbolSize=5, symbolBrush=pen, name = key)
-        
+
         self.setWindowTitle(f'oocupancy per class per frame: iteration {iteration}')
 
 
@@ -174,9 +175,9 @@ win.resize(600,600)
 
 win.show()
 
-timer = QtCore.QTimer()
-timer.timeout.connect(lambda : win.update_plots(win.iteration + 1))
-timer.start(1000)
+#timer = QtCore.QTimer()
+#timer.timeout.connect(lambda : win.update_plots(win.iteration + 1))
+#timer.start(1000)
 #QtCore.QApplication.exec_()
 
 

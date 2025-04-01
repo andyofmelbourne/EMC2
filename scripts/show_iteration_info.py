@@ -20,15 +20,19 @@ def get_args():
     )
     parser.add_argument('fnam', type=str, help='iteration_info file name')
     parser.add_argument('--cxi', type=str, help='cxi file for frame viewing')
+    parser.add_argument('--sparse', type=str, help='overide sparse file')
     args = parser.parse_args()
 
     return args
 
 
 def get_sparse_fnam(cxi_file, iteration=0):
-    with h5py.File(args.fnam) as f:
-        key = f'iteration_{iteration}/sparse_file'
-        fnam_sparse = f[key][()].decode()
+    if args.sparse:
+        fnam_sparse = args.sparse
+    else:
+        with h5py.File(args.fnam) as f:
+            key = f'iteration_{iteration}/sparse_file'
+            fnam_sparse = f[key][()].decode()
     return fnam_sparse
 
 
@@ -432,7 +436,8 @@ class ImageView(pg.ImageView):
 app = pg.mkQApp()
 
 # Enable antialiasing for prettier plots
-pg.setConfigOption('background', pg.mkColor(0.1))
+# pg.setConfigOption('background', pg.mkColor(0.1))
+pg.setConfigOption('background', 'k')
 pg.setConfigOption('foreground', 'w')
 pg.setConfigOptions(antialias=True)
 pg.setConfigOptions(imageAxisOrder='row-major')

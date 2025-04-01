@@ -109,9 +109,16 @@ def get_args():
     )
 
     parser.add_argument(
+        '--pixel_sparse',
+        action='store_true',
+        default=False,
+        help='use sparse photons only (only has effect when sparse is True)'
+    )
+
+    parser.add_argument(
         '--P_thresh',
         type=float,
-        default=1e-4,
+        default=0,
         help='see --sparse'
     )
 
@@ -147,6 +154,7 @@ def K_dot_P(
     P_dr,
     numpy=True,
     sparse=False,
+    pixel_sparse=False,
     frame_chunk_size=None,
     P_thresh=0.,
     N_ri=None
@@ -155,9 +163,9 @@ def K_dot_P(
     I = K_di_getter.shape[1]
 
     if N_ri is None:
-        N_ri = np.empty((R, I), dtype=P_dr.dtype)
+        N_ri = np.zeros((R, I), dtype=P_dr.dtype)
 
-    if args.numpy and not sparse:
+    if args.numpy and not sparse and not pixel_sparse:
         d_iter = tqdm(
             utils.chunker(frame_chunk_size, D),
             desc='calculating K . P using numpy',
@@ -166,24 +174,42 @@ def K_dot_P(
 
         for d0, d1, dd in d_iter:
             K_di = K_di_getter[d0:d1]
-            np.dot(P_dr[d0:d1].T, K_di, out=N_ri)
+            N_ri += np.dot(P_dr[d0:d1].T, K_di)
 
-    elif numpy and sparse:
+    elif numpy and sparse and not pixel_sparse:
         Ds = 0
-        d_iter = tqdm(
+        r_iter = tqdm(
             range(R),
             desc='calculating K . P (sparse)',
             leave=False
         )
-        for r in d_iter:
+        for r in r_iter:
             ds = np.where(P_dr[:, r] > P_thresh)[0]
             if len(ds) > 0:
                 K_di = K_di_getter[ds]
                 Ds += len(ds)
-                np.dot(P_dr[ds, 0], K_di, out=N_ri[r])
+                # np.dot(P_dr[ds, 0], K_di, out=N_ri[r])
+                N_ri[r] = np.dot(P_dr[ds, r], K_di)
+        logger.info(f'processed {100 * Ds / (D * R):.2f}% of frames')
+
+    elif numpy and sparse and pixel_sparse:
+        Ds = 0
+        r_iter = tqdm(
+            range(R),
+            desc='calculating K . P (sparse)',
+            leave=False
+        )
+        for r in r_iter:
+            ds = np.where(P_dr[:, r] > P_thresh)[0]
+            for d in ds:
+                K_d, inds = K_di_getter.sparse(d)
+                Ds += 1
+                # np.dot(P_dr[ds, 0], K_di, out=N_ri[r])
+                N_ri[r, inds] += P_dr[d, r] * K_d
         logger.info(f'processed {100 * Ds / (D * R):.2f}% of frames')
     else:
         raise ValueError(f'could not parse {numpy=} {sparse=}')
+
     return N_ri
 
 
@@ -243,6 +269,7 @@ def main(
             P_dr,
             numpy=numpy,
             sparse=sparse,
+            pixel_sparse=args.pixel_sparse,
             frame_chunk_size=frame_chunk_size,
             P_thresh=P_thresh,
             N_ri=None
@@ -338,10 +365,13 @@ if __name__ == "__main__":
     logger.info(f'mean wsums for class {class_c.class_id}: '
                 f'{np.mean(class_c.wsums)}')
 
-    I0_n = class_c.model.copy()
-
-    if class_c.update_model is False:
+    if class_c.update_model:
+        logger.info('update_model is True, updating model')
+    else:
         logger.info('update_model is False, skipping model update')
+        sys.exit()
+
+    I0_n = class_c.model.copy()
 
     # calculate model voxel indices for each r,i pair
     # -----------------------------------------------

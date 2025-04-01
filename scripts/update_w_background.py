@@ -68,6 +68,10 @@ if __name__ == '__main__':
     # load config file
     config = input_output.load_config(args.config)
 
+    if config['classes'][0]['update_fluence'] is False:
+        logger.info('update_fluence is False, skipping w_d update')
+        sys.exit()
+
     models = len(config['classes'])
 
     class_files = [
@@ -84,7 +88,8 @@ if __name__ == '__main__':
     # load data
     logger.info(f'loading frames with frame_model={class_0.frame_model}')
     K_di = data_getter.Data_getter(
-        mask=class_0.P_mask,
+        # mask=class_0.P_mask,
+        mask=class_0.mask,
         split_frames=class_0.split_frames,
         cxi_file=class_0.cxi_file,
         filter=class_0.frame_selection,
@@ -113,7 +118,8 @@ if __name__ == '__main__':
         mapper = tomograms.Mapper(
             class_c.model.ndim,
             class_c.model.shape[0],
-            class_c.P_xyz,
+            # class_c.P_xyz,
+            class_c.xyz,
             class_c.mapping_matrix,
             opencl_stuff['context'],
             opencl_stuff['queue'],
@@ -123,12 +129,14 @@ if __name__ == '__main__':
         W_ri = tomograms.Tomograms(mapper, class_c.model)
 
         W_cri.append(W_ri)
+        # Wsums_cr.append(class_c.P_wsums)
         Wsums_cr.append(class_c.wsums)
 
-        with h5py.File(class_file) as f:
+        with h5py.File(class_file, 'r') as f:
             P_cdr.append(f['probability_matrix'][d0:d1])
 
-        C_i = class_c.P_C
+        # C_i = class_c.P_C
+        C_i = class_c.C
 
     w0_d = class_c.relative_fluence
     w_d = model_update_background_sparse.w_update(

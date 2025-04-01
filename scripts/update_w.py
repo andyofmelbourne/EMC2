@@ -3,6 +3,7 @@ import h5py
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
+import sys
 
 from context import emc2
 from emc2 import utils
@@ -54,6 +55,7 @@ if __name__ == "__main__":
 
     if class_c.update_fluence is False:
         logger.info('update_fluence is False, skipping w_d update')
+        sys.exit()
 
     K_d = class_c.ksums
     w_d = np.zeros((K_d.shape[0],), dtype=float)

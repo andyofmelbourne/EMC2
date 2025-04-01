@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 import argparse
 import numpy as np
+from tqdm import tqdm
+import sys
 
 
 """
@@ -31,7 +33,7 @@ def get_args():
     parser.add_argument(
         'logfile',
         type=str,
-        help='configuration file name'
+        help='emc2 log file (emc2.log)'
     )
 
     parser.add_argument(
@@ -62,12 +64,17 @@ def get_args():
     #     help='group messages together if they seem to be a subprocess'
     # )
 
-    parser.add_argument(
-        '--collapse',
-        action='store_true',
-        help='group messages together if they seem to be a subprocess'
-    )
+    # parser.add_argument(
+    #     '--collapse',
+    #     action='store_true',
+    #     help='group messages together if they seem to be a subprocess'
+    # )
 
+    parser.add_argument(
+        '--max_msgs',
+        type=int,
+        help='display at most "max_msgs" messages'
+    )
 
     args = parser.parse_args()
     return args
@@ -143,7 +150,7 @@ def merge_processes(ps, k1, k2):
 def collapse_pid(processes):
     # loop over unique msgs
     msgs = set(k[0] for k in processes.keys())
-    for msg in msgs:
+    for msg in tqdm(msgs):
         changed = True
 
         while changed:
@@ -155,7 +162,7 @@ def collapse_pid(processes):
             K0 = len(keys)
 
             # i = active key number
-            for i in range(K0):
+            for i in tqdm(range(K0), leave=False):
                 # loop over processes with msg and join with active process
                 for j in range(K0):
                     keys = [key for key in processes if key[0] == msg]
@@ -316,6 +323,9 @@ if __name__ == "__main__":
                     err = '?'
                     raise ValueError(err)
 
+            if args.max_msgs and len(processes) >= args.max_msgs:
+                break
+
         t1 = float(line.split(':')[0])
 
     # sometimes we lose logs (??)
@@ -336,12 +346,14 @@ if __name__ == "__main__":
     if args.discard:
         keys = list(processes.keys())
         total_time = t1 - t0
-        for k in keys:
+        for k in tqdm(keys):
             t = np.sum(processes[k].duration)
             if t < args.discard * total_time:
                 processes.pop(k)
 
     # sort process by start time
+    print('sorting keys')
+    sys.stdout.flush()
     keys = list(processes.keys())
     start_times = [np.atleast_1d(processes[k].start_time).min() for k in keys]
     keys_sorted = [keys[i] for i in np.argsort(start_times)]
@@ -357,6 +369,8 @@ if __name__ == "__main__":
 
     y = 0
     ys = []
+    print('plotting')
+    sys.stdout.flush()
     for process in processes_sorted:
         if process.msg in colours:
             colour = colours[process.msg]
