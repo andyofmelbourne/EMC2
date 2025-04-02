@@ -45,7 +45,7 @@ import h5py
 import math
 
 # D x R chunksize
-chunksize = 1 * 128 * 128
+chunksize = 1 * 1024 * 1024
 
 # for each class file get D and R
 for fnam in sys.argv[1:]:
