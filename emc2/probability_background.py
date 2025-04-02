@@ -76,3 +76,81 @@ def calc_logR(wsums_r, F_dri, likelihood='basic'):
     logR_dr -= F_dr
 
     return logR_dr
+
+
+# sparse
+def calc_logR_test(w_d, wsums_r, B_di, K_di, C_i, W_ri, likelihood='basic'):
+    D, I = K_di.shape
+    R = W_ri.shape[0]
+
+    logR_dr = np.zeros((D, R), dtype=float)
+
+    desc1 = 'calculating sum_i F_dri = w_d Wsums_r + Bsums_d'
+    desc2 = 'calculating K_d logF_dr'
+    for _ in tqdm(range(1), desc=desc1):
+        F_dr = np.outer(w_d, wsums_r) \
+            + B_di.background_sums[:, None]
+
+        if likelihood == 'Poisson_fluence_free':
+            for d in tqdm(range(D), desc=desc2, leave=False):
+                F_dr[d] = K_di.photon_sums[d] * np.log(F_dr[d])
+
+    d_iter = tqdm(
+        range(D),
+        desc='calculating dot product K . logF over frames'
+    )
+
+    W_ri.cpu = True
+    for d in d_iter:
+        Kd_i, pixels = K_di.sparse(d)
+        Bd_i = B_di.sparse(d, pixels)
+        Cd_i = C_i[pixels]
+
+        for r in tqdm(range(R)):
+            Wd_ri = W_ri[r:r+1, pixels]
+            F_dri = w_d[d] * Cd_i * Wd_ri[0] + Bd_i
+
+            m = F_dri > 0
+
+            logR_dr[d, r] = np.sum(Kd_i[m] * np.log(F_dri[m])) - F_dr[d, r]
+
+    return logR_dr
+
+
+# cpu intensive
+def calc_logR_test2(w_d, wsums_r, B_di, K_di, C_i, W_ri, likelihood='basic'):
+    D, I = K_di.shape
+    R = W_ri.shape[0]
+
+    logR_dr = np.zeros((D, R), dtype=float)
+
+    desc1 = 'calculating sum_i F_dri = w_d Wsums_r + Bsums_d'
+    desc2 = 'calculating K_d logF_dr'
+    for _ in tqdm(range(1), desc=desc1):
+        F_dr = np.outer(w_d, wsums_r) \
+            + B_di.background_sums[:, None]
+
+        if likelihood == 'Poisson_fluence_free':
+            for d in tqdm(range(D), desc=desc2, leave=False):
+                F_dr[d] = K_di.photon_sums[d] * np.log(F_dr[d])
+
+    r_iter = tqdm(
+        range(R),
+        desc='calculating dot product K . logF over rotations'
+    )
+
+    W_ri.cpu = True
+    for r in r_iter:
+        Wd_ri = W_ri[r:r+1, :][0]
+
+        for d in tqdm(range(D), leave=False):
+            Kd_i = K_di[d:d+1, :][0]
+            Bd_i = B_di[d:d+1, :][0]
+
+            F_dri = w_d[d] * C_i * Wd_ri + Bd_i
+
+            m = F_dri > 0
+
+            logR_dr[d, r] = np.sum(Kd_i[m] * np.log(F_dri[m])) - F_dr[d, r]
+
+    return logR_dr
