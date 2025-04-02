@@ -95,6 +95,12 @@ def get_args():
     )
 
     parser.add_argument(
+        '--scale',
+        type=float,
+        help='Only merge r-indices with a given scale factor (background only)'
+    )
+
+    parser.add_argument(
         '--numpy',
         action='store_true',
         default=False,
@@ -139,10 +145,9 @@ def get_args():
 
     parser.add_argument(
         '-o', '--output',
-        type=argparse.FileType('wb'),
-        default=sys.stdout.buffer,
-        help="Python pickle output file. \
-            The result is written as a dictionary"
+        type=str,
+        help="h5 file to write 'model' dataset to. \
+        Default is input class file."
     )
 
     args = parser.parse_args()
@@ -373,9 +378,32 @@ if __name__ == "__main__":
 
     I0_n = class_c.model.copy()
 
-    # calculate model voxel indices for each r,i pair
-    # -----------------------------------------------
     opencl_stuff = utils_cl.opencl_init(args.device)
+
+    if args.scale is not None and class_c.frame_model == 'background':
+        rs = np.where(class_c.scale_r == args.scale)[0]
+
+        if len(rs) == 0:
+            raise ValueError(f'No r-indices where found with '
+                             f'scale={args.scale}')
+
+        logger.info(f'selecting {len(rs)} r-indices with scale = {args.scale}')
+        class_c.mapping_matrix = class_c.mapping_matrix[:, rs, :, :]
+
+        with h5py.File(args.class_file) as f:
+            P_dr = f['probability_matrix'][()]
+
+        P_dr = P_dr[:, rs]
+
+    elif args.scale is None and class_c.frame_model == 'background':
+        with h5py.File(args.class_file) as f:
+            P_dr = f['probability_matrix'][()]
+
+    elif args.scale is not None and class_c.frame_model != 'background':
+        logger.warning(
+            f'scale factor selection not compatible with '
+            f'frame_model={class_c.frame_model}'
+        )
 
     # initialise mapper: r,i -> s,n
     mapper = tomograms.Mapper(
@@ -426,9 +454,6 @@ if __name__ == "__main__":
     elif class_c.frame_model == 'background':
         B_di = data_getter.Data_getter_background(K_di_getter)
 
-        with h5py.File(args.class_file) as f:
-            P_dr = f['probability_matrix'][()]
-
         I_n = model_update_background_sparse.I_update(
             class_c.relative_fluence,
             class_c.model,
@@ -453,8 +478,14 @@ if __name__ == "__main__":
     # test
     # I_n = np.clip(I_n, 1e-8, None)
 
+    if args.output is None:
+        args.output = args.class_file
+
     # save
-    with h5py.File(args.class_file, 'r+') as f:
-        f['model'][:] = I_n
+    with h5py.File(args.output, 'a') as f:
+        if 'model' in f:
+            f['model'][:] = I_n
+        else:
+            f['model'] = I_n
 
     logger.info('update_I (stop)')
