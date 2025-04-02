@@ -82,7 +82,7 @@ def main(
 def main_background(
     model, K_di, C_i, w_d, wsums_r, M_srn, xyz_i,
     context, queue, interpolation_forward,
-    likelihood
+    likelihood, W_ri
 ):
     B_di = data_getter.Data_getter_background(K_di)
 
@@ -96,6 +96,19 @@ def main_background(
         F_dri,
         likelihood=likelihood
     )
+    """
+
+    # testing
+    logR_dr = probability_background.calc_logR_test2(
+        w_d,
+        wsums_r,
+        B_di,
+        K_di,
+        C_i,
+        W_ri,
+        likelihood=likelihood
+    )
+    """
 
     return logR_dr
 
@@ -141,6 +154,23 @@ if __name__ == "__main__":
     opencl_stuff = utils_cl.opencl_init(device_no=args.device)
 
     if class_c.frame_model == 'background':
+        # testing
+        # initialise tomograms
+        """
+        mapper = tomograms.Mapper(
+            class_c.model.ndim,
+            class_c.model.shape[0],
+            class_c.P_xyz,
+            class_c.mapping_matrix,
+            opencl_stuff['context'],
+            opencl_stuff['queue'],
+            interpolation=class_c.interpolation_forward
+        )
+
+        W_ri = tomograms.Tomograms(mapper, class_c.model)
+        """
+        W_ri = None
+
         logR_dr = main_background(
             class_c.model,
             K_di,
@@ -152,7 +182,8 @@ if __name__ == "__main__":
             opencl_stuff['context'],
             opencl_stuff['queue'],
             class_c.interpolation_forward,
-            class_c.likelihood
+            class_c.likelihood,
+            W_ri
         )
     else:
         # initialise tomograms
