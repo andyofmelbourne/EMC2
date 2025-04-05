@@ -52,6 +52,7 @@ default = {
     'frame_model': None,
     'maximise': None,
     'update_fluence': None,
+    'update_logR': None,
     'update_probability': None,
     'update_model': None,
     'polarisation': None,
@@ -128,9 +129,16 @@ class Class(dict):
                     ):
                         continue
 
-                    v = f[key][()]
+                    if key in f:
+                        v = f[key][()]
+                    else:
+                        logger.warning(f'{key} not found in class file using'
+                                       f'default value {key}={default[key]}')
+                        v = default[key]
+
                     if type(v) is bytes:
                         v = v.decode()
+
                     self.set(key, v)
 
         except (OSError, BlockingIOError) as e:

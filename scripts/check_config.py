@@ -47,6 +47,12 @@ def get_args():
         help='only checking data cache'
     )
 
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='forced update'
+    )
+
     args = parser.parse_args()
     return args
 
@@ -69,6 +75,7 @@ changed = {
     'maximise': None,
     'update_fluence': None,
     'update_model': None,
+    'update_logR': None,
     'update_probability': None,
     'polarisation': None,
     'P_thresh': None,
@@ -145,7 +152,10 @@ if __name__ == '__main__':
 
     # see what's changed
     for key in changed.keys():
-        same = compare(class_file[key], class_config[key])
+        if key in class_file and key in class_config:
+            same = compare(class_file[key], class_config[key])
+        else:
+            same = False
         changed[key] = not same
 
     # for k, v in changed.items():
@@ -184,6 +194,7 @@ if __name__ == '__main__':
         'P_thresh',
         'update_model',
         'update_fluence',
+        'update_logR',
         'update_probability',
         'maximise',
         'frame_model',
@@ -207,6 +218,7 @@ if __name__ == '__main__':
     update_data = (
         any([changed[key] for key in update_data_keys])
         or update_geometry
+        or args.data
     )
 
     update_fluence = (
@@ -222,6 +234,12 @@ if __name__ == '__main__':
     if args.skip_data:
         update_data = False
 
+    if args.force:
+        update_geometry = True
+        update_model = True
+        update_data = True
+        update_mapping = True
+
     update = any([update_geometry, update_model, update_data, update_mapping])
 
     logger.debug(f'{args.prob=}')
@@ -234,7 +252,10 @@ if __name__ == '__main__':
     if update_params:
         with h5py.File(args.class_file, 'r+') as f:
             for key in update_param_keys:
-                f[key][...] = class_config[key]
+                if key in f:
+                    f[key][...] = class_config[key]
+                else:
+                    f[key] = class_config[key]
 
     if update:
         for key in class_file:

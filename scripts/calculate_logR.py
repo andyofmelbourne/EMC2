@@ -127,10 +127,10 @@ if __name__ == "__main__":
     class_c = classes.Class()
     class_c.load(args.class_file, skip=['probability_matrix'])
 
-    if class_c.update_probability:
-        logger.info('update_probability is True, updating logR')
+    if class_c.update_logR:
+        logger.info('update_logR is True, updating logR')
     else:
-        logger.info('update_probability is False, skipping logR update')
+        logger.info('update_logR is False, skipping logR update')
         sys.exit()
 
     mpi_split_frames = (args.data_chunk, args.data_chunks)
