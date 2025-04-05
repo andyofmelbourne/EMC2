@@ -592,7 +592,7 @@ def write_h5(f, k, v, compression=True, chunks=None):
                 del f[k]
 
         if k not in f:
-            if not chunks:
+            if not chunks and compression:
                 chunks = v.shape
             f.create_dataset(k, data=v, chunks=chunks, compression=compression)
 
