@@ -147,7 +147,7 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.scatter.addItem(sc)
 
         # show labels if any
-        if labels : 
+        if labels :
             self.scatter.addLegend()
             for key, (pen, label_inds) in labels.items():
                 xl = x[label_inds]
