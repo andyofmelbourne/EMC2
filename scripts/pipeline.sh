@@ -67,6 +67,7 @@ if [[ $restart == "True" ]]; then
 	rm -f ${DIR}/iteration_info.h5
 	rm -f ${DIR}/class_*.h5
 	rm -f ${DIR}/emc2.log
+	rm -f ${DIR}/cachdir/class_*.h5
 	python scripts/init.py $1
 else
 	# check if the frame selection
@@ -107,7 +108,10 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	if [[ $background == "True" ]]; then
 		for (( i = 0; i < 2; i++ )); do
 			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
-			parallel --verbose --jobs 8 python scripts/update_I.py --device {%} {} ::: ${DIR}/class_*.h5
+			# parallel --verbose --jobs 8 python scripts/update_I.py --device {%} {} ::: ${DIR}/class_*.h5
+			parallel --verbose --jobs 8 python scripts/update_I_background.py {1} --data_chunk {2} --data_chunks 8 ::: ${DIR}/class_*.h5 ::: $(seq 0 7)
+			python scripts/update_I_merge.py ${DIR}/class_*.h5
+			parallel --verbose --jobs 8 python scripts/update_I_solve.py ::: ${DIR}/class_*.h5
 			parallel --verbose --jobs 8 "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 8" ::: $(seq 0 7) | python emc2/pipe_to_h5.py
 		done
 	else

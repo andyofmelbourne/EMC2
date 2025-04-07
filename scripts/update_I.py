@@ -11,9 +11,12 @@ from emc2 import tomograms
 from emc2 import utils_cl
 from emc2 import classes
 from emc2 import data_getter
-from emc2 import model_update_background_sparse
+from emc2 import model_update_background_sparse_test
 from emc2 import get_script_logger
 from emc2 import symmetry
+
+# testing
+model_update_background_sparse = model_update_background_sparse_test
 
 """
 Wsum_r = sum_i C_i W_ri
