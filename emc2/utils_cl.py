@@ -1,5 +1,6 @@
 import pyopencl as cl
 import pyopencl.array
+import pyclblast
 import numpy as np
 import logging
 
@@ -62,6 +63,56 @@ def opencl_init_cpu(rank=0):
     # )
     queue = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
+
+
+def dot(A, x):
+    """
+    for testing
+    """
+    opencl_stuff = opencl_init()
+    queue = opencl_stuff['queue']
+
+    A_cl = cl.array.empty(
+        queue,
+        A.shape,
+        dtype=np.float32
+    )
+
+    x_cl = cl.array.empty(
+        queue,
+        x.shape,
+        dtype=np.float32
+    )
+
+    y = np.empty(A.shape[0], dtype=np.float32)
+
+    y_cl = cl.array.empty(
+        queue,
+        y.shape,
+        dtype=np.float32
+    )
+
+    cl.enqueue_copy(queue, A_cl.data,
+                    np.ascontiguousarray(A.astype(np.float32)))
+    cl.enqueue_copy(queue, x_cl.data,
+                    np.ascontiguousarray(x.astype(np.float32)))
+
+    pyclblast.gemv(
+        queue,
+        A.shape[0],
+        A.shape[1],
+        A_cl,
+        x_cl,
+        y_cl,
+        A.shape[1]
+    )
+
+    cl.enqueue_copy(queue, y, y_cl.data)
+    return y
+
+def dot_cl(A_cl, x_cl):
+    pass
+
 
 
 # these are much faster than pyopencl's packaged routines for some reason
