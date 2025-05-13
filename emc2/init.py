@@ -84,6 +84,7 @@ def init_model(c):
     N = c['model_length']
     if 'model_init' in c and c['model_init'] == 'blob':
         I = blob(N, c['dq'])
+        I *= (np.random.random(I.shape) + 0.1)
     else:
         shape = c['dimensions'] * (N,)
         I = np.random.random(shape)
