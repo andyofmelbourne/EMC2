@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class Symmetry():
 
     def __init__(self, i0, shape, symmetry = 'inversion'):
@@ -22,7 +23,7 @@ class Symmetry():
 
         # only cubes for now
         assert(np.allclose(shape, self.N))
-        assert(symmetry in ['inversion', 'D6'])
+        assert(symmetry in ['P1', 'inversion', 'D6'])
         assert(len(shape) in [2, 3])
 
         if   symmetry == 'inversion' and len(shape) == 3 :
@@ -40,7 +41,14 @@ class Symmetry():
         elif symmetry == 'D6' and len(shape) == 2:
             self.get_asymmetric_unit   = self.get_asymmetric_unit_inversion
             self.get_symmetry_partners = self.get_symmetry_partners_inversion_2D
+
+        elif symmetry == 'P1':
+            self.get_asymmetric_unit   = self.get_asymmetric_unit_P1
+            self.get_symmetry_partners = self.get_symmetry_partners_P1
         
+    def get_asymmetric_unit_P1(self):
+        return self.n
+
     def get_asymmetric_unit_inversion(self):
         return self.n[self.i <= self.i0]
 
@@ -79,6 +87,9 @@ class Symmetry():
                         nout.append( i2 * self.N**2 + j2 * self.N + k2 )
         return np.unique(nout)
 
+    def get_symmetry_partners_P1(self, n):
+        return [n]
+
     def get_symmetry_partners_inversion_3D(self, n):
         nout = []
         i, j, k = self.i[n], self.j[n], self.k[n]
@@ -98,7 +109,7 @@ class Symmetry():
             if (i2 >= 0) and (i2 < self.N) and (j2 >= 0) and (j2 < self.N):
                 nout.append( i2 * self.N + j2)
         return np.unique(nout)
-        
+
 
 def apply_symmetry_2D(ar, symmetry, i0):
     x, y = np.indices(ar.shape)
@@ -140,7 +151,7 @@ def apply_symmetry_3D(ar, symmetry, i0):
         ar[m] += ar[x2[m], y2[m], z2[m]]
     
     return ar
-    
+
 
 def apply_symmetry(ar, symmetry, i0):
     """
@@ -159,3 +170,25 @@ def apply_symmetry(ar, symmetry, i0):
         raise ValueError(f'dimension {ar.ndim} not supported')
     
     return ar
+
+def get_non_voxel_operators(dimensions, symmetry):
+    
+    if symmetry == 'P1' or symmetry == 'inversion':
+        if dimensions == 2 :
+            return np.array([[[1, 0], [0, 1]]])
+        elif dimensions == 3:
+            return np.array([[[1, 0, 0], [0, 1, 0], [0, 0, 1]]])
+        else :
+            raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
+    
+    elif symmetry == 'D6' :
+        if dimensions == 3 :
+            # 3 x pi / 3 rotations about z-axis
+            #coord.x = x * c - y * s;
+            #coord.y = x * s + y * c;
+            c = 0.5;
+            s = 0.8660254037844386;
+            Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+            return np.array([Rz, Rz.dot(Rz), Rz.dot(Rz.dot(Rz))])
+        else :
+            raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')

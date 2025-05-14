@@ -6,8 +6,11 @@ from collections import OrderedDict
 
 #fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery3/iteration_info.h5'
 #cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
-cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
+#fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
+#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
+fnam       =\
+'/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
 labels_key = '/manual_selection'
 iteration = 1
 
@@ -17,7 +20,7 @@ if cxi_file and Path(cxi_file).is_file():
     # find cache
     a = Path(fnam).parent.joinpath('cachdir')
     stem = Path(cxi_file).stem
-    b = list(a.glob(f'{stem}*sparse.h5'))
+    b = list(a.glob(f'{stem}*sparse*.h5'))
     
     data_file = None
     if len(b) == 1 :
