@@ -3,6 +3,7 @@ import h5py
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
+import sys
 
 from context import emc2
 from emc2 import utils
@@ -50,6 +51,12 @@ if __name__ == "__main__":
         args.class_file,
         skip=['mapping_matrix', 'probability_matrix']
     )
+
+    if class_c.update_model:
+        logger.info('update_model is True, updating model')
+    else:
+        logger.info('update_model is False, skipping model update')
+        sys.exit()
 
     N = class_c.model.size
 

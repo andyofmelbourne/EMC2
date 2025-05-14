@@ -217,8 +217,8 @@ def calculate_buffer_size(S, rs_d, K_di, device=None):
                              f'required {device.global_mem_size/1024**3:.2f} '
                              f'gb available')
         else:
-            logger.debug(f'there is enough memory to store a, b, n buffers on gpu '
-                         f'{mem/1024**3:.2f} gb required '
+            logger.debug(f'there is enough memory to store a, b, n buffers on '
+                         f'gpu {mem/1024**3:.2f} gb required '
                          f'{device.global_mem_size/1024**3:.2f} gb available')
 
     assert (N < np.iinfo(np.int32).max)
@@ -424,7 +424,7 @@ class Solve_I_mp():
 
     def solve(self):
         logger.debug('solving for I (start)')
-        with multiprocessing.Pool(4) as pool:
+        with multiprocessing.Pool(1) as pool:
             results = pool.imap(self._solve_worker, self.n_asy, 4*2048)
 
             n_iter = tqdm(
@@ -467,6 +467,8 @@ def solve_I(shape, model_symmetry, fnam, stream=False):
     n_asy = sym.get_asymmetric_unit()
 
     out_n = np.zeros(np.prod(shape), dtype=float)
+
+    print(f'{n_asy.shape=}')
 
     logger.debug('solving for I (start)')
     with h5py.File(fnam, 'r') as f:
@@ -523,6 +525,65 @@ def solve_I(shape, model_symmetry, fnam, stream=False):
     out_n /= O_n
 
     logger.debug('solving for I (stop)')
+    return out_n
+
+
+def solve_I_part(shape, model_symmetry, fnam,
+                 n_chunk=0, n_chunks=1, stream=False):
+    sym = symmetry.Symmetry(
+        shape[0]//2,
+        shape,
+        symmetry=model_symmetry
+    )
+    N = np.prod(shape)
+
+    n_asy = sym.get_asymmetric_unit()
+
+    n0, n1, dn = utils.chunker_mpi(n_chunks, len(n_asy))
+    n0, n1, dn = n0[n_chunk], n1[n_chunk], dn[n_chunk]
+
+    n_asy = n_asy[n0: n1]
+
+    print(f'{(n0, n1, dn)=} {n_asy.shape=}')
+
+    out_n = np.zeros(N, dtype=float)
+
+    with h5py.File(fnam, 'r') as f:
+        a_dsri = f['a_dsri']
+        b_dsri = f['b_dsri']
+        cc_n = f['c_n'][()]
+        inds = f['n_indices'][()]
+
+        if stream is False:
+            a_dsri = a_dsri[()]
+            b_dsri = b_dsri[()]
+
+        for n in tqdm(n_asy, desc='solving for I'):
+            ns = sym.get_symmetry_partners(n)
+            a_n = []
+            b_n = []
+            c_n = []
+            M = 0
+            for ni in ns:
+                i, j = inds[ni: ni+2]
+                a_n.append(a_dsri[i: j])
+                b_n.append(b_dsri[i: j])
+                c_n.append(cc_n[ni])
+                M += j-i
+
+            if M == 0:
+                continue
+
+            c_n = np.sum(c_n)
+
+            out_n[n] = utils.solve_axbc(
+                np.concatenate(a_n),
+                np.concatenate(b_n),
+                c_n,
+                fill_value=0., ftol=1e-2, xtol=1e-3,
+                maxiters=1000, algorithm='Halley', debug=False
+            )
+
     return out_n
 
 

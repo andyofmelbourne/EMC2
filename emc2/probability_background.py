@@ -7,8 +7,6 @@ import logging
 # testing
 import pyopencl as cl
 import pyopencl.array
-import pyclblast
-import sys
 from . import utils_cl
 
 mf = cl.mem_flags

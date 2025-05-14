@@ -9,6 +9,7 @@ from emc2 import utils
 from emc2 import classes
 from emc2 import model_update_background_sparse
 from emc2 import get_script_logger
+from emc2 import symmetry
 
 
 def get_args():
@@ -24,24 +25,17 @@ def get_args():
     )
 
     parser.add_argument(
-        '--n_chunk',
-        type=int,
-        default=0,
-        help='calculate for a subset of frames'
-    )
-
-    parser.add_argument(
         '--n_chunks',
         type=int,
         default=1,
-        help='number of blocks to split frames over'
+        help='number of blocks to split model voxels over'
     )
 
     parser.add_argument(
         '-o', '--output',
         type=str,
         help="h5 file to write 'model' dataset to. \
-        Default is input class file."
+        Default is <working_director>/cachdir/class_<c>_model_<chunkno>.h5"
     )
 
     args = parser.parse_args()
@@ -57,7 +51,7 @@ if __name__ == '__main__':
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
-    logger.info('update_I_merge (start)')
+    logger.info('update_I_sort (start)')
 
     # load class file
     class_c = classes.Class()
@@ -72,43 +66,60 @@ if __name__ == '__main__':
         logger.info('update_model is False, skipping model update')
         sys.exit()
 
-    fnam = f'class_{class_c.class_id}_abn.h5'
-    fnam = cachedir.joinpath(fnam)
-
-    """
-    s = model_update_background_sparse.Solve_I_mp(
-        class_c.model.shape,
-        class_c.symmetry,
-        fnam
-    )
-    I_n = s.solve()
-    """
-
-    I_n = model_update_background_sparse.solve_I(
-        class_c.model.shape,
-        class_c.symmetry,
-        fnam
-    )
-
     I0_n = class_c.model.copy()
+    shape = I0_n.shape
+    out_n = np.zeros(I0_n.size, dtype=float)
+    model_symmetry = class_c.symmetry
+
+    fnams = []
+    for n in range(args.n_chunks):
+        fnam = f'class_{class_c.class_id}_model_{n}.h5'
+        fnam = cachedir.joinpath(fnam)
+        fnams.append(fnam)
+
+        with h5py.File(fnam) as f:
+            inds = f['inds'][()]
+            out_n[inds] += f['model'][()]
+
+    out_n = symmetry.apply_symmetry(
+        out_n.reshape(shape),
+        model_symmetry,
+        shape[0]//2
+    )
+
+    sym = symmetry.Symmetry(
+        shape[0]//2,
+        shape,
+        symmetry=model_symmetry
+    )
+
+    n_asy = sym.get_asymmetric_unit()
+
+    O_n = np.zeros(out_n.size, dtype=int)
+    O_n[n_asy] = 1
+    O_n = symmetry.apply_symmetry(
+        O_n.reshape(shape),
+        model_symmetry,
+        shape[0]//2
+    )
+
+    O_n[O_n == 0] = 1
+    out_n /= O_n
+
+    I_n = out_n
 
     rms = np.mean((I0_n - I_n)**2)**0.5
     logger.info(f'rms difference for model {class_c.class_id}: {rms}')
     logger.info(f'class_c.class_id: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
 
-    # test
-    # I_n = np.clip(I_n, 1e-8, None)
-
     if args.output is None:
         args.output = args.class_file
 
     # save
-    """
     with h5py.File(args.output, 'a') as f:
         if 'model' in f:
             f['model'][:] = I_n
         else:
             f['model'] = I_n
-    """
 
     logger.info('update_I (stop)')

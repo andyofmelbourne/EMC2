@@ -14,7 +14,8 @@ import signal
 import pickle
 
 # label = '/manual_selection/is_good'
-label = '/manual_selection/is_crap'
+# label = '/manual_selection/is_crap'
+label = '/manual_selection/is_strong_hit'
 dset_counts = '/entry_1/instrument_1/detector_1/photon_counts'
 dset_frames = '/entry_1/data_1/data'
 geom_fnam = '/home/andyofmelbourne/Documents/'\
@@ -74,9 +75,8 @@ def load_frame(i, frame):
     # print(f'loading frame {j} from file {fnam}')
     with h5py.File(fnam) as f:
         dset = f[dset_frames]
-        print(dset.shape, frame.shape)
         # why np.s_[0]? segfault otherwise, might be bug
-        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[:])
+        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[0])
 
 
 def clip_scalar(val, vmin, vmax):

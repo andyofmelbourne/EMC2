@@ -27,21 +27,21 @@ def get_args():
         '--n_chunk',
         type=int,
         default=0,
-        help='calculate for a subset of frames'
+        help='calculate for a subset of model voxels'
     )
 
     parser.add_argument(
         '--n_chunks',
         type=int,
         default=1,
-        help='number of blocks to split frames over'
+        help='number of blocks to split model voxels over'
     )
 
     parser.add_argument(
         '-o', '--output',
         type=str,
         help="h5 file to write 'model' dataset to. \
-        Default is input class file."
+        Default is <working_director>/cachdir/class_<c>_model_<chunkno>.h5"
     )
 
     args = parser.parse_args()
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     logger = get_script_logger.get_logger(
         working_directory=working_directory
     )
-    logger.info('update_I_merge (start)')
+    logger.info('update_I_solve_part (start)')
 
     # load class file
     class_c = classes.Class()
@@ -84,31 +84,26 @@ if __name__ == '__main__':
     I_n = s.solve()
     """
 
-    I_n = model_update_background_sparse.solve_I(
+    I_n = model_update_background_sparse.solve_I_part(
         class_c.model.shape,
         class_c.symmetry,
-        fnam
+        fnam,
+        args.n_chunk,
+        args.n_chunks,
     )
 
-    I0_n = class_c.model.copy()
-
-    rms = np.mean((I0_n - I_n)**2)**0.5
-    logger.info(f'rms difference for model {class_c.class_id}: {rms}')
-    logger.info(f'class_c.class_id: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
-
-    # test
-    # I_n = np.clip(I_n, 1e-8, None)
-
     if args.output is None:
-        args.output = args.class_file
+        output = f'class_{class_c.class_id}_model_{args.n_chunk}.h5'
+        output = cachedir.joinpath(output)
+    else:
+        output = args.output
+
+    mask = I_n > 0
+    inds = np.where(mask)[0]
 
     # save
-    """
-    with h5py.File(args.output, 'a') as f:
-        if 'model' in f:
-            f['model'][:] = I_n
-        else:
-            f['model'] = I_n
-    """
+    with h5py.File(output, 'w') as f:
+        f['model'] = I_n[mask]
+        f['inds'] = inds
 
-    logger.info('update_I (stop)')
+    logger.info('update_I_solve_poart (stop)')

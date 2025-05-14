@@ -49,7 +49,7 @@ keys_mapping = defaultdict(lambda: "unknown", qt_keys)
 args = get_args()
 fnam = args.fnam
 
-iteration = 0
+iteration = 1
 
 
 def get_max_iteration():
@@ -87,6 +87,7 @@ def get_slices(fnam, iteration):
 
 
 def get_plots(fnam, iteration):
+    print(f'{fnam=} {iteration=}')
     # get plots
     plots = []
     titles = []
@@ -104,10 +105,18 @@ def get_plots(fnam, iteration):
         plots.append(f['P_gini'][()])
         titles.append('gini coefficient of P')
 
-        plots.append(f['orientation_changes'][()])
+        k2 = 'orientation_changes'
+        if k2 in f:
+            plots.append(f[k2][()])
+        else:
+            plots.append(np.array([0]))
         titles.append('orientation changes')
 
-        plots.append(f['class_changes'][()])
+        k2 = 'class_changes'
+        if k2 in f:
+            plots.append(f[k2][()])
+        else:
+            plots.append(np.array([0]))
         titles.append('class changes')
 
         g = f[k]
@@ -266,9 +275,12 @@ class ImageView(pg.ImageView):
         print('press "s" to save selection to '
               'cxi file and good_classes.pickle')
 
+        # class_id of last clicked class
         self.last_selected = None
+        # selected slices (not necessarily = class_ids)
         self.selection = None
         self.N = None
+        # classes[slice_index] = class_id
         self.classes = None
         self.positions = None
         self.pos = None
@@ -292,6 +304,7 @@ class ImageView(pg.ImageView):
             self.update_plots(last=True)
 
         elif key == 'F':
+            print(key)
             if (
                 self.last_selected is not None
                 and args.cxi is not None
@@ -302,6 +315,8 @@ class ImageView(pg.ImageView):
                 )
                 fnam_sparse = get_sparse_fnam(args.cxi, self.iteration)
                 show_frames(args.cxi, fnam_sparse, frames, self.iteration)
+            else:
+                print(self.last_selected, args.cxi, self.most_likely_model_d)
 
         elif key == 'S':
             if (
@@ -349,8 +364,9 @@ class ImageView(pg.ImageView):
         for p in ev:
             c = p.data()
             i = np.where(self.classes == c)[0]
+            print(f'{self.last_selected=} {c=} {i=} {self.classes=}')
             self.selection[i] = ~self.selection[i]
-            if self.selection[c]:
+            if self.selection[i[0]]:
                 self.last_selected = c
             self.update_selection()
             self.print_number_of_events()
@@ -364,12 +380,12 @@ class ImageView(pg.ImageView):
 
     def update_selection(self):
         spots = []
-        for c in range(len(self.classes)):
-            pen = pg.mkPen('g') if self.selection[c] else None
+        for i in range(len(self.classes)):
+            pen = pg.mkPen('g') if self.selection[i] else None
             spot = {
-                'pos': self.positions[c],
+                'pos': self.positions[i],
                 'pen': pen,
-                'data': self.classes[c]
+                'data': self.classes[i]
             }
             spots.append(spot)
 

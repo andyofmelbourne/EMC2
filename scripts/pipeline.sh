@@ -45,7 +45,7 @@ import h5py
 import math
 
 # D x R chunksize
-chunksize = 1 * 1024 * 1024
+chunksize = 32 * 1024 * 1024
 
 # for each class file get D and R
 for fnam in sys.argv[1:]:
@@ -109,9 +109,11 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 		for (( i = 0; i < 2; i++ )); do
 			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
 			# parallel --verbose --jobs 8 python scripts/update_I.py --device {%} {} ::: ${DIR}/class_*.h5
-			parallel --verbose --jobs 8 python scripts/update_I_background.py {1} --data_chunk {2} --data_chunks 8 ::: ${DIR}/class_*.h5 ::: $(seq 0 7)
+			parallel --verbose --jobs 4 python scripts/update_I_background.py {1} --data_chunk {2} --data_chunks 32 ::: ${DIR}/class_*.h5 ::: $(seq 0 31)
 			parallel --verbose --jobs 8 python scripts/update_I_merge.py ::: ${DIR}/class_*.h5
-			parallel --verbose --jobs 8 python scripts/update_I_solve.py ::: ${DIR}/class_*.h5
+			# parallel --verbose --jobs 8 python scripts/update_I_solve.py ::: ${DIR}/class_*.h5
+			parallel --verbose --jobs 8 python scripts/update_I_solve_part.py {1} --n_chunk {2} --n_chunks 8 ::: ${DIR}/class_*.h5 ::: $(seq 0 7)
+			parallel --verbose --jobs 8 python scripts/update_I_solve_finish.py {1} --n_chunks 8 ::: ${DIR}/class_*.h5
 			parallel --verbose --jobs 8 "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 8" ::: $(seq 0 7) | python emc2/pipe_to_h5.py
 		done
 	else
