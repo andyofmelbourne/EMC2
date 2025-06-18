@@ -14,16 +14,17 @@ import signal
 import pickle
 
 # label = '/manual_selection/is_good'
-# label = '/manual_selection/is_crap'
-label = '/manual_selection/is_strong_hit'
+label = '/manual_selection/is_crap'
+# label = '/entry_1/2D_EMC/is_good'
+# label = '/manual_selection/is_strong_hit'
 dset_counts = '/entry_1/instrument_1/detector_1/photon_counts'
 dset_frames = '/entry_1/data_1/data'
 geom_fnam = '/home/andyofmelbourne/Documents/'\
             'git_repos/xfel7927/geom/r0600.geom'
 
 DIR = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits'
-# fnams = [f'{DIR}/Cube_all_hits.cxi']
-fnams = [f'{DIR}/Ery_all_hits.cxi']
+fnams = [f'{DIR}/Cube_all_hits.cxi']
+# fnams = [f'{DIR}/Ery_all_hits.cxi']
 
 # geom = extra_geom.DSSC_1MGeometry.from_crystfel_geom(geom_fnam)
 geom = extra_geom.AGIPD_1MGeometry.from_crystfel_geom(geom_fnam)
@@ -76,7 +77,8 @@ def load_frame(i, frame):
     with h5py.File(fnam) as f:
         dset = f[dset_frames]
         # why np.s_[0]? segfault otherwise, might be bug
-        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[0])
+        # dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[0])
+        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[:])
 
 
 def clip_scalar(val, vmin, vmax):

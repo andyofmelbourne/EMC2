@@ -209,10 +209,10 @@ if __name__ == '__main__':
     for fnam in class_files:
         with h5py.File(fnam, 'r') as f:
             D, R = f['probability_matrix'].shape
-            P_thresh = f['P_thresh'][()]
             Rs.append(R)
             Ds.append(D)
 
+    P_thresh = config['classes'][0]['P_thresh']
     assert (np.allclose(Ds, D))
     R = np.sum(Rs)
 

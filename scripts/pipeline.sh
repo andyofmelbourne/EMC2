@@ -67,7 +67,6 @@ if [[ $restart == "True" ]]; then
 	rm -f ${DIR}/iteration_info.h5
 	rm -f ${DIR}/class_*.h5
 	rm -f ${DIR}/emc2.log
-	rm -f ${DIR}/cachdir/class_*.h5
 	python scripts/init.py $1
 else
 	# check if the frame selection
@@ -78,18 +77,23 @@ fi
 echo $iterations $restart
 
 for (( iteration = 0; iteration < iterations; iteration++ )); do
+	rm -f ${DIR}/cachdir/class_*.h5
+	rm -f ${DIR}/cachdir/class_*.txt
+
 	# check for config updates that need to be updated now
 	if [[ $iteration == 0 && $restart != "True" ]]; then 
 		parallel --verbose --jobs 50% python scripts/check_config.py --prob $1 ::: ${DIR}/class_*.h5
 	fi
 
 	# calculate tomogram sums (P_mask)
-	parallel --verbose --delay 0.1 --jobs 16 python scripts/calculate_wsums.py --P_mask ::: ${DIR}/class_*.h5
+	parallel --verbose --delay 0.1 --jobs 50% python scripts/calculate_wsums.py --P_mask ::: ${DIR}/class_*.h5
 
 	# calculate logR matrix with 1 cpu per chunk
 	# logR_cmd | parallel --delay 1 --verbose --jobs 50% | python emc2/pipe_to_h5.py
 	# {%} is the slot number (between one and the number of jobs running in parallel)
-	logR_cmd | parallel --delay 0 --verbose --jobs 8 {} --device {%} | python emc2/pipe_to_h5.py
+	
+	# get free system memory in GB
+	logR_cmd | parallel --memfree 5G --retries 10 --delay 1 --verbose --jobs 8 {} --device {%} | python emc2/pipe_to_h5.py
 
 	# calculate P matrix by normalising logR over classes with 8 cpus
 	# this doesn't need to use parallel, it helps a little with loading
@@ -103,24 +107,23 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	fi
 
 	# calculate tomogram sums (mask)
-	parallel --verbose --delay 0.1 --jobs 16 python scripts/calculate_wsums.py --mask ::: ${DIR}/class_*.h5
+	parallel --verbose --delay 0.1 --jobs 50% python scripts/calculate_wsums.py --mask ::: ${DIR}/class_*.h5
 
 	if [[ $background == "True" ]]; then
 		for (( i = 0; i < 2; i++ )); do
-			# python scripts/update_w_background.py $1 | python emc2/pipe_to_h5.py
-			# parallel --verbose --jobs 8 python scripts/update_I.py --device {%} {} ::: ${DIR}/class_*.h5
-			parallel --verbose --jobs 4 python scripts/update_I_background.py {1} --data_chunk {2} --data_chunks 32 ::: ${DIR}/class_*.h5 ::: $(seq 0 31)
-			parallel --verbose --jobs 8 python scripts/update_I_merge.py ::: ${DIR}/class_*.h5
-			# parallel --verbose --jobs 8 python scripts/update_I_solve.py ::: ${DIR}/class_*.h5
-			parallel --verbose --jobs 8 python scripts/update_I_solve_part.py {1} --n_chunk {2} --n_chunks 8 ::: ${DIR}/class_*.h5 ::: $(seq 0 7)
-			parallel --verbose --jobs 8 python scripts/update_I_solve_finish.py {1} --n_chunks 8 ::: ${DIR}/class_*.h5
-			parallel --verbose --jobs 8 "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 8" ::: $(seq 0 7) | python emc2/pipe_to_h5.py
+			# parallel --verbose --jobs 50% python scripts/update_I_background_test.py {1} ::: ${DIR}/class_*.h5
+			parallel --halt now,fail=1 --verbose --jobs 50% python scripts/update_I_cn.py ::: ${DIR}/class_*.h5
+			parallel --halt now,fail=1 --verbose --jobs 50% python scripts/update_I_buffer_size.py ::: ${DIR}/class_*.h5
+			parallel --halt now,fail=1 --verbose --jobs 100% python scripts/update_I_fill_buffer.py ::: ${DIR}/class_*.h5
+			parallel --halt now,fail=1 --verbose --jobs 2 --delay 2 < ${DIR}/cachdir/class_fill_buffer_jobs.txt
+			parallel --halt now,fail=1 --verbose --jobs 100% python scripts/update_I_merge_asymmetric.py ::: ${DIR}/class_*.h5
+			parallel --verbose --jobs 50% "python scripts/update_w_background.py $1 --data_chunk {} --data_chunks 8" ::: $(seq 0 7) | python emc2/pipe_to_h5.py
 		done
 	else
 		python scripts/update_w.py ${DIR}/class_*.h5
 
 		# parallel --verbose --jobs 8 python scripts/update_I.py --numpy --sparse --pixel_sparse --r_chunk_size 4096 ::: ${DIR}/class_*.h5
-		parallel --verbose --jobs 50% python scripts/update_I.py --numpy --frame_chunk_size 1024 --r_chunk_size 1024 ::: ${DIR}/class_*.h5
+		parallel --verbose --jobs 1 python scripts/update_I.py --numpy --frame_chunk_size 1024 --r_chunk_size 1024 ::: ${DIR}/class_*.h5
 	fi
 	python scripts/save_model_slices.py ${DIR}/class_*.h5
 done

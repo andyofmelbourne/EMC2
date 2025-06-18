@@ -8,12 +8,13 @@ import signal
 from pathlib import Path
 import pyqtgraph.exporters
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
-cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+
+# fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+# cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
 # cxi_file = None
 
-#fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
-#cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
+cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
 labels_key = '/manual_selection'
 #iteration = 484
 iteration = 0
@@ -25,21 +26,21 @@ if cxi_file and Path(cxi_file).is_file():
     a = Path(fnam).parent.joinpath('cachdir')
     stem = Path(cxi_file).stem
     b = list(a.glob(f'{stem}*sparse*.h5'))
-    
+
     data_file = None
     if len(b) == 1 :
         data_file = b[0]
-    elif len(b) == 0 :  
+    elif len(b) == 0:
         print(f'no data file found in cachdir {a} skipping labels')
-    elif len(b) > 1 :  
+    elif len(b) > 1:
         print('multiple files found in cachdir, skipping labels')
-    
+
     print(f'{data_file=} {a=} {b=}')
     # load frame references
     if data_file :
         with h5py.File(data_file) as f:
             inds = f['/frame_index'][()]
-    
+
         labels = {}
         with h5py.File(cxi_file) as f:
             g = f[labels_key]

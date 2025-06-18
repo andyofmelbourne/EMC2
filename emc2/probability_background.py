@@ -104,7 +104,7 @@ def calc_logR(wsums_r, w_d, K_di, B_di, C_i, W_ri_getter, likelihood='basic'):
 
     logR_dr = np.zeros((D, R), dtype=float)
 
-    d_block_size = min(256, D)
+    d_block_size = min(64, D)
     r_block_size = min(64, R)
 
     # calculate logR offset

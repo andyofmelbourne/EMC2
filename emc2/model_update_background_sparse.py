@@ -124,7 +124,85 @@ __kernel void fill_buffer (
 """
 
 
+def calculate_c_n_test(w_d, P_dr, M_sri, C_i, N, queue, context):
+    code = """
+    // single worker single group
+    __kernel void add (
+        global int *N_sri,
+        global float *wP_r,
+        global float *C_i,
+        global float *out,
+        const  int S,
+        const  int R,
+        const  int I
+    ) {
+    int n, s, r, i;
+    float wP, C;
+    for (s=0; s<S; s++){
+    for (r=0; r<R; r++){
+        wP = wP_r[r];
+        for (i=0; i<I; i++){
+            n = N_sri[s * R * I + r * I + i];
+            C = C_i[i];
+            out[n] += wP * C;
+    }}}
+    }
+    """
+    logger.debug('calculating cc_n (start)')
+    S, R, I = M_sri.shape
+    S = np.int32(S)
+    I = np.int32(I)
+
+    # np accelerates this over cpus
+    for i in tqdm(range(1), desc='calculating wP_r = sum_d w_d P_dr'):
+        wP_r = np.dot(w_d, P_dr)
+        wP_r = np.ascontiguousarray(wP_r.astype(np.float32))
+
+    # now we need to merge C_i wP_r into n-space (model-space)
+    cc_n = np.zeros(N, dtype=np.float32)
+    r_chunk_size = 32
+
+    r_iter = tqdm(
+        utils.chunker(r_chunk_size, R),
+        desc='merging C_i sum_d w_d P_dr for model'
+    )
+
+    cl_code = cl.Program(context, code).build()
+    queue = queue
+    events = None
+
+    for r0, r1, dr in r_iter:
+        N_sri = M_sri[:, r0:r1, :]
+
+        if events is not None:
+            events[0].wait()
+
+        N_sri_temp = N_sri.copy()
+        wP_r_temp = wP_r[r0:r1].copy()
+
+        event = cl_code.add(
+                queue, (1,), (1,),
+                cl.SVM(N_sri_temp),
+                cl.SVM(wP_r_temp),
+                cl.SVM(C_i),
+                cl.SVM(cc_n),
+                S,
+                np.int32(r1-r0),
+                I
+        )
+        events = [event]
+
+    event.wait()
+    logger.debug('calculating cc_n (stop)')
+    return cc_n
+
+
+
 def calculate_c_n(w_d, P_dr, M_sri, C_i, N):
+    """
+    c   = C_r wP_r          where wP_r = sum_d w_d P_dr
+                            and C_r = sum_(i in M_rn) C_i
+    """
     logger.debug('calculating cc_n (start)')
     S, R, I = M_sri.shape
 
@@ -134,7 +212,7 @@ def calculate_c_n(w_d, P_dr, M_sri, C_i, N):
 
     # now we need to merge C_i wP_r into n-space (model-space)
     cc_n = np.zeros(N, dtype=float)
-    r_chunk_size = 128
+    r_chunk_size = 32
 
     S = np.int32(M_sri.shape[0])
 
@@ -194,7 +272,7 @@ def get_sparse_P_matrix(P_dr):
     return Ps_dr, rs_d, Nr
 
 
-def calculate_buffer_size(S, rs_d, K_di, device=None):
+def calculate_buffer_size(S, rs_d, K_di, device=None, check=True):
     for _ in tqdm(range(1), desc='calculating buffer size', disable=False):
         # total number of r-indices contributing to I
         len_rs_d = np.array([len(r) for r in rs_d])
@@ -209,19 +287,20 @@ def calculate_buffer_size(S, rs_d, K_di, device=None):
     #   a_dsri
     #   b_dsri
     #   n_dsri
-    if device is not None:
-        mem = 3 * 4 * N
-        if mem > device.global_mem_size:
-            raise ValueError(f'not enough memory to store a, b, n '
-                             f'buffers on gpu {mem/1024**3:.2f} gb '
-                             f'required {device.global_mem_size/1024**3:.2f} '
-                             f'gb available')
-        else:
-            logger.debug(f'there is enough memory to store a, b, n buffers on '
-                         f'gpu {mem/1024**3:.2f} gb required '
-                         f'{device.global_mem_size/1024**3:.2f} gb available')
+    if check:
+        if device is not None:
+            mem = 3 * 4 * N
+            if mem > device.global_mem_size:
+                raise ValueError(f'not enough memory to store a, b, n '
+                                 f'buffers on gpu {mem/1024**3:.2f} gb '
+                                 f'required {device.global_mem_size/1024**3:.2f} '
+                                 f'gb available')
+            else:
+                logger.debug(f'there is enough memory to store a, b, n buffers on '
+                             f'gpu {mem/1024**3:.2f} gb required '
+                             f'{device.global_mem_size/1024**3:.2f} gb available')
 
-    assert (N < np.iinfo(np.int32).max)
+        assert (N < np.iinfo(np.int32).max)
     return N
 
 

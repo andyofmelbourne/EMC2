@@ -49,7 +49,7 @@ keys_mapping = defaultdict(lambda: "unknown", qt_keys)
 args = get_args()
 fnam = args.fnam
 
-iteration = 1
+iteration = 0
 
 
 def get_max_iteration():
@@ -252,7 +252,7 @@ def write_good_frames(
         is_good = np.zeros(shape[0], dtype=bool)
         is_good[frame_index] = True
 
-        print(f'writing {np.sum(is_good)} is_good '
+        print(f'writing {np.sum(is_good)} '
               f'labels to {cxi_fnam} in {dset}')
         if dset in f:
             f[dset][:] = is_good
@@ -261,10 +261,16 @@ def write_good_frames(
 
     # write class list to iteration info
     with h5py.File(iter_fnam, 'r+') as f:
-        dset = 'good_classes'
-        if dset in f:
-            del f[dset]
-        f[dset] = good_classes
+        if 'good' in dset:
+            dset2 = 'good_classes'
+        elif 'bad' in dset:
+            dset2 = 'bad_classes'
+        else:
+            raise ValueError
+
+        if dset2 in f:
+            del f[dset2]
+        f[dset2] = good_classes
 
 
 class ImageView(pg.ImageView):
@@ -272,7 +278,9 @@ class ImageView(pg.ImageView):
         super(ImageView, self).__init__(*args, **kwargs)
 
         print('press "f" to display frames of class of last selection')
-        print('press "s" to save selection to '
+        print('press "s" to save /entry_1/2D_EMC/is_good selection to '
+              'cxi file and good_classes.pickle')
+        print('press "b" to save /entry_1/2D_EMC/is_bad selection to '
               'cxi file and good_classes.pickle')
 
         # class_id of last clicked class
@@ -318,12 +326,18 @@ class ImageView(pg.ImageView):
             else:
                 print(self.last_selected, args.cxi, self.most_likely_model_d)
 
-        elif key == 'S':
+        elif key == 'S' or key == 'B':
             if (
                 args.cxi is not None
                 and self.most_likely_model_d is not None
                 and np.any(self.selection)
             ):
+
+                if key == 'S':
+                    dset = '/entry_1/2D_EMC/is_good'
+                elif key == 'B':
+                    dset = '/entry_1/2D_EMC/is_bad'
+
                 # good_classes = np.where(self.selection)[0]
                 good_classes = np.unique(self.classes[self.selection])
 
@@ -333,7 +347,8 @@ class ImageView(pg.ImageView):
 
                 fnam_sparse = get_sparse_fnam(args.cxi, self.iteration)
                 write_good_frames(
-                    args.fnam, args.cxi, fnam_sparse, frames, good_classes
+                    args.fnam, args.cxi, fnam_sparse, frames, good_classes,
+                    dset=dset
                 )
 
     def init_scatter(self):

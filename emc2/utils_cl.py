@@ -197,6 +197,52 @@ def to_gpu_3D_image(ar, queue=None, context=None):
     )
     return I_cl
 
+class Bincount_cl():
+
+    def __init__(
+        self,
+        length,
+        buffer_shape,
+        queue=None,
+        context=None
+    ):
+        self.out = np.zeros(length, dtype=np.int32)
+        self.buffer = np.zeros(buffer_shape, dtype=np.int32)
+
+        self.cl_code = cl.Program(context, self.code()).build()
+        self.queue = queue
+        self.event = None
+
+    def add(self, buffer):
+        N = np.int32(buffer.size)
+        if self.event is not None:
+            self.event[0].wait()
+
+        self.buffer[:N] = buffer.ravel()
+
+        event = self.cl_code.add(
+                self.queue, (1,), (1,),
+                cl.SVM(self.buffer),
+                cl.SVM(self.out),
+                N
+        )
+        self.event = [event]
+
+    def code(self):
+        return """
+        // single worker single group
+        __kernel void add (
+            global int *array,
+            global int *out,
+            const  int N
+        ) {
+        for (int n=0; n<N; n++){
+            out[array[n]] += 1;
+        }
+        }
+        """
+
+
 
 class Solve_axbc_cl():
 

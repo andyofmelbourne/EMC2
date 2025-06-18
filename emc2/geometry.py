@@ -86,7 +86,7 @@ def geometry(
 
     # scale
     scale = 1/C[mask].max()
-    logger.degub(f'scaling solid angle and polarisation factor by {scale}')
+    logger.debug(f'scaling solid angle and polarisation factor by {scale}')
     C *= scale
 
     M = model_length
