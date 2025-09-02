@@ -180,6 +180,12 @@ if __name__ == "__main__":
         logger.info('update_model is True, updating model')
     else:
         logger.info('update_model is False, skipping model update')
+
+        fnam_jobs = cachedir.joinpath(f'class_fill_buffer_jobs.txt')
+        with open(fnam_jobs, 'a') as file:
+            cmd = f'echo nothing to do for {class_c.class_id}\n'
+            file.write(cmd)
+
         sys.exit()
 
     # initialise mapper: r,i -> s,n
@@ -291,30 +297,32 @@ if __name__ == "__main__":
     with h5py.File(fnam, 'w') as f:
         f['counts_m'] = counts_m
 
-    # find the set of m_min and m_max values that fit in memory
-    cc = np.cumsum(counts_m)
-    m_min = 0
-    m_max = 0
-    m_mins = []
-    m_maxs = []
-    while m_max < len(n_asy):
-        m_max = np.searchsorted(cc, max_buf_size+cc[m_max])
-        m_mins.append(m_min)
-        m_maxs.append(m_max)
-        m_min = m_max
+    # check for null solution:
+    if np.sum(counts_m) > 0:
+        # find the set of m_min and m_max values that fit in memory
+        cc = np.cumsum(counts_m)
+        m_min = 0
+        m_max = 0
+        m_mins = []
+        m_maxs = []
+        while m_max < len(n_asy):
+            m_max = np.searchsorted(cc, max_buf_size+cc[m_max])
+            m_mins.append(m_min)
+            m_maxs.append(m_max)
+            m_min = m_max
 
-    # write jobs file
-    fnam_jobs = cachedir.joinpath(f'class_fill_buffer_jobs.txt')
-    with open(fnam_jobs, 'a') as file:
-        device = 0
-        for m_min, m_max in zip(m_mins, m_maxs):
-            cmd = f'python scripts/update_I_fill_buffer_2.py '\
-                  f'--m_min {m_min} --m_max {m_max} '\
-                  f'--device {device} '\
-                  f'{args.class_file}\n'
+        # write jobs file
+        fnam_jobs = cachedir.joinpath(f'class_fill_buffer_jobs.txt')
+        with open(fnam_jobs, 'a') as file:
+            device = 0
+            for m_min, m_max in zip(m_mins, m_maxs):
+                cmd = f'python scripts/update_I_fill_buffer_2.py '\
+                      f'--m_min {m_min} --m_max {m_max} '\
+                      f'--device {device} '\
+                      f'{args.class_file}\n'
 
-            file.write(cmd)
-            device += 1
+                file.write(cmd)
+                device += 1
 
 
     logger.info('update_I_fill_buffer (stop)')

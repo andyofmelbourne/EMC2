@@ -9,12 +9,12 @@ from pathlib import Path
 import pyqtgraph.exporters
 
 
-# fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
-# cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
+fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Ery_maxwell/iteration_info.h5'
+cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
 # cxi_file = None
 
-fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
-cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
+# fnam       = '/home/andyofmelbourne/Documents/2024/p7927/scratch/2D-EMC/Cube_maxwell/iteration_info.h5'
+# cxi_file   = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Cube_all_hits.cxi'
 labels_key = '/manual_selection'
 #iteration = 484
 iteration = 0

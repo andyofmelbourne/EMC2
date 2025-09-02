@@ -284,6 +284,87 @@ def get_transpose(K_di, B_di, working_directory=None):
     return K_id, B_id
 
 
+class Geom_corr_xyz():
+    """
+    xy_map = (2+,) + frame_shape shaped array of floating point pixel locations
+    x_coords = xyz_map[0]
+    y_coords = xyz_map[1]
+
+    display array of shape (N, M):
+        n[i] = round((x[i] - x_min) / pixel_size)
+        m[i] = round((y[i] - y_min) / pixel_size)
+        l[i] = M * n[i] + m[i]
+
+        where i is a flattened (frame) pixel index
+        where j is a flattened (image) pixel index
+
+        image[l[i]] = frame[i]
+
+    N = round((x_max - x_min) / pixel_size)+1
+    M = round((y_max - y_min) / pixel_size)+1
+
+    centre coordinates in image frame:
+        n_0 = round(-x_min / pixel_size)
+        m_0 = round(-y_min / pixel_size)
+    """
+
+    def __init__(
+        self,
+        xyz_map,
+        pixel_size,
+        return_centre=False
+    ):
+        x, y = xyz_map[:2]
+        x_min = x.min()
+        y_min = y.min()
+        x_max = x.max()
+        y_max = y.max()
+
+        self.centre = [round(-x_min / pixel_size), round(-y_min / pixel_size)]
+
+        n = np.round((x - x_min) / pixel_size).astype(np.uint32)
+        m = np.round((y - y_min) / pixel_size).astype(np.uint32)
+        N = round((x_max - x_min) / pixel_size)+1
+        M = round((y_max - y_min) / pixel_size)+1
+
+        self.l = M * n.ravel() + m.ravel()
+        self.shape = (N, M)
+        self.image = np.zeros((M*N,), dtype=np.float32)
+        self.image.fill(np.nan) # shows as background
+        self.frame_shape = x.shape
+        self.return_centre = return_centre
+
+    def apply(self, ar):
+        if len(ar.shape) == (len(self.frame_shape) + 1):
+            N = ar.shape[0]
+
+            out = np.empty(
+                    (N,) + self.shape,
+                    dtype=self.image.dtype)
+
+            for n in range(N):
+                self.image[self.l] = ar[n].ravel()
+                out[n][:] = self.image.reshape(self.shape)
+        else:
+            self.image[self.l] = ar.ravel()
+            out = self.image.reshape(self.shape)
+
+        if self.return_centre:
+            out = (out, self.centre)
+
+        return out
+
+    # for compatibility with extra_geom
+    def position_modules(self, ar, out=None):
+        self.return_centre = False
+        t = self.apply(ar)
+        if out is not None:
+            out[:] = t
+        else:
+            out = t.copy()
+        return out, self.centre
+
+
 class Geom_corr():
     def __init__(
         self,

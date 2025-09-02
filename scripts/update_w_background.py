@@ -142,6 +142,9 @@ if __name__ == '__main__':
     w_d = model_update_background_sparse.w_update(
         P_cdr, K_di, B_di, W_cri, Wsums_cr, C_i)
 
+    # apply minimum value
+    w_d = np.clip(w_d, 1e-8, None)
+
     rms = np.mean((w0_d[d0:d1] - w_d)**2)**0.5
     logger.info(f'rms difference for w_d {d0}-{d1}: {rms}')
     logger.info(f'{np.mean(w_d)=}')

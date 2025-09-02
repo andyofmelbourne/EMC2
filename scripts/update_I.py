@@ -335,16 +335,18 @@ def main(
     # apply symmetry
     i0 = N // 2
 
-    N_n = symmetry.apply_symmetry(
-        N_n.reshape(model.shape),
-        symmetry_name,
-        i0
+    sym = symmetry.Symmetry(
+            i0,
+            model.shape,
+            symmetry_name
     )
 
-    D_n = symmetry.apply_symmetry(
+    N_n = sym.apply_symmetry(
+        N_n.reshape(model.shape),
+    )
+
+    D_n = sym.apply_symmetry(
         D_n.reshape(model.shape),
-        symmetry_name,
-        i0
     )
 
     # I = N / D

@@ -81,26 +81,22 @@ if __name__ == '__main__':
             inds = f['inds'][()]
             out_n[inds] += f['model'][()]
 
-    out_n = symmetry.apply_symmetry(
-        out_n.reshape(shape),
-        model_symmetry,
-        shape[0]//2
-    )
-
     sym = symmetry.Symmetry(
         shape[0]//2,
         shape,
-        symmetry=model_symmetry
+        model_symmetry
+    )
+
+    out_n = sym.apply_symmetry(
+        out_n.reshape(shape)
     )
 
     n_asy = sym.get_asymmetric_unit()
 
     O_n = np.zeros(out_n.size, dtype=int)
     O_n[n_asy] = 1
-    O_n = symmetry.apply_symmetry(
+    O_n = sym.apply_symmetry(
         O_n.reshape(shape),
-        model_symmetry,
-        shape[0]//2
     )
 
     O_n[O_n == 0] = 1

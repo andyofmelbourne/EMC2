@@ -13,8 +13,11 @@ from pyqtgraph.graphicsItems.InfiniteLine import InfiniteLine
 import signal
 import pickle
 
+from context import emc2
+from emc2 import utils
+
 # label = '/manual_selection/is_good'
-label = '/manual_selection/is_crap'
+label = '/manual_selection/is_multiple'
 # label = '/entry_1/2D_EMC/is_good'
 # label = '/manual_selection/is_strong_hit'
 dset_counts = '/entry_1/instrument_1/detector_1/photon_counts'
@@ -25,12 +28,21 @@ geom_fnam = '/home/andyofmelbourne/Documents/'\
 DIR = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits'
 fnams = [f'{DIR}/Cube_all_hits.cxi']
 # fnams = [f'{DIR}/Ery_all_hits.cxi']
+fnams = ['/home/andyofmelbourne/Documents/2025/LCLS-CXI-1008449/data/cxi/r0105_gold_hits.cxi']
 
-# geom = extra_geom.DSSC_1MGeometry.from_crystfel_geom(geom_fnam)
-geom = extra_geom.AGIPD_1MGeometry.from_crystfel_geom(geom_fnam)
+if False:
+    # geom = extra_geom.DSSC_1MGeometry.from_crystfel_geom(geom_fnam)
+    geom = extra_geom.AGIPD_1MGeometry.from_crystfel_geom(geom_fnam)
+else:
+    with h5py.File(fnams[0]) as f:
+        xyz = f['entry_1/instrument_1/detector_1/xyz_map'][()]
+        pixel_size = f['entry_1/instrument_1/detector_1/x_pixel_size'][()]
+    geom = utils.Geom_corr_xyz(xyz, pixel_size)
+
 with h5py.File(fnams[0]) as f:
     frame = f[dset_frames][0]
     im, centre = geom.position_modules(frame)
+
 frame_shape = frame.shape
 frame_dtype = frame.dtype
 image_shape = im.shape
@@ -77,8 +89,8 @@ def load_frame(i, frame):
     with h5py.File(fnam) as f:
         dset = f[dset_frames]
         # why np.s_[0]? segfault otherwise, might be bug
-        # dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[0])
-        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[:])
+        dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[0])
+        # dset.read_direct(frame, source_sel=np.s_[j], dest_sel=np.s_[:])
 
 
 def clip_scalar(val, vmin, vmax):

@@ -319,10 +319,16 @@ if __name__ == "__main__":
     search_string = f'class_{class_c.class_id}_asymmetric_unit_*.h5'
     fnams = list(cachedir.glob(search_string))
     if len(fnams) == 0:
-        raise ValueError(
+        # could be empty class
+        # raise ValueError(
+        #     f'Error no files matching the pattern {search_string} '
+        #     f'where found in the directory: {cachedir}'
+        # )
+        print(
             f'Error no files matching the pattern {search_string} '
             f'where found in the directory: {cachedir}'
         )
+        sys.exit()
 
     desc = f'loading and mergeing asymmetric unit for class {class_c.class_id}'
     I_m = []
@@ -352,20 +358,11 @@ if __name__ == "__main__":
     out_n = np.zeros(np.prod(shape), dtype=float)
     out_n[n_asy] = out_m
 
-    out_n = symmetry.apply_symmetry(
-        out_n.reshape(shape),
-        class_c.symmetry,
-        shape[0]//2
-    )
+    out_n = sym.apply_symmetry(out_n.reshape(shape))
 
     O_n = np.zeros(out_n.size, dtype=int)
     O_n[n_asy] = 1
-    O_n = symmetry.apply_symmetry(
-        O_n.reshape(shape),
-        class_c.symmetry,
-        class_c.model.shape[0]//2
-    )
-
+    O_n = sym.apply_symmetry(O_n.reshape(shape))
     O_n[O_n == 0] = 1
     out_n /= O_n
 

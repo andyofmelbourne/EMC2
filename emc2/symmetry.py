@@ -1,8 +1,7 @@
 import numpy as np
 
 
-class Symmetry():
-
+class Symmetry_old():
     def __init__(self, i0, shape, symmetry = 'inversion'):
         """
         symmetry = 'P1', 'inversion', 'C6' or 'D6'
@@ -27,13 +26,13 @@ class Symmetry():
         assert(len(shape) in [2, 3])
 
         if   symmetry == 'inversion' and len(shape) == 3 :
-            self.get_asymmetric_unit   = self.get_asymmetric_unit_inversion
+            self.get_asymmetric_unit   = self.get_asymmetric_unit_inversion_3D
             self.get_symmetry_partners = self.get_symmetry_partners_inversion_3D
             self.get_asymmetric_unit_mapping =\
             self.get_asymmetric_unit_mapping_inversion_3D
 
         elif symmetry == 'inversion' and len(shape) == 2 :
-            self.get_asymmetric_unit   = self.get_asymmetric_unit_inversion
+            self.get_asymmetric_unit   = self.get_asymmetric_unit_inversion_2D
             self.get_symmetry_partners = self.get_symmetry_partners_inversion_2D
             self.get_asymmetric_unit_mapping =\
             self.get_asymmetric_unit_mapping_inversion_2D
@@ -64,6 +63,37 @@ class Symmetry():
 
     def get_asymmetric_unit_P1(self):
         return self.n
+
+    def get_asymmetric_unit_inversion_2D(self):
+        """
+        return the set of raveled indices inside
+        the asymmetric unit
+
+          -4-3-2-1 0 1 2 3 (i-i0)
+        -4 - - - - - - - -
+        -3 - - - - - 0 0 0
+        -2 - - - - - 0 0 0
+        -1 - - - - - 0 0 0
+         0 - - - - - 0 0 0
+         1 - - - - 0 0 0 0
+         2 - - - - 0 0 0 0
+         3 - - - - 0 0 0 0
+        (j-j0)
+        - asymmetric unit
+        0 outside asymmetric unit
+          (related by symmetry to other values)
+        """
+        i, j, i0 = self.i, self.j, self.i0
+        m = (i <= i0)
+        m[j == 0] = True
+        m[(j > i0) * (i == i0)] = False
+        return self.n[m]
+
+    def get_asymmetric_unit_inversion_3D(self):
+        m = self.i <= self.i0
+        m[self.i0, self.i0+1:] = False
+        m[self.i0, :, self.i0+1:] = False
+        return self.n[m]
 
     def get_asymmetric_unit_inversion(self):
         return self.n[self.i <= self.i0]
@@ -265,6 +295,133 @@ class Symmetry():
         m = M_n[n]
         """
         return self.n
+
+
+class Symmetry():
+    def __init__(self, i0, shape, symmetry = 'inversion'):
+        """
+        symmetry = 'P1', 'inversion', 'C6' or 'D6'
+
+        pixel coordinates: (i, j, k)
+        real  coordinates: (x, y, z) = (i-i0, j-i0, k-i0)
+        flattened coord  : (i, j, k) = (n / (N*N), n / N, n % N)
+        inversion:
+            assymetryic unit = x <= 0
+                               i <= i0
+                               n <= i0 * N^2
+            mapping:           x2 = -x
+                               i2 = -i + 2 i0
+                               n2 = -n + 2 N^2 * i0
+        """
+        self.n = np.arange(np.prod(shape))
+
+        self.N = N = shape[0]
+
+        self.i0 = i0
+
+        if len(shape) == 3:
+            self.i = i = self.n // (shape[1] * shape[2])
+            self.j = j = self.n // shape[2] % shape[1]
+            self.k = k = self.n % shape[2]
+            im = (-i + 2 * self.i0) % N
+            jm = (-j + 2 * self.i0) % N
+            km = (-k + 2 * self.i0) % N
+
+            I = self.n.copy()
+            inv = im * N**2 + jm * N + km
+            P2z = im * N**2 + jm * N + k
+            P2x = i * N**2 + jm * N + km
+            P2y = im * N**2 + j * N + km
+
+        elif len(shape) == 2:
+            self.i = i = self.n // shape[1]
+            self.j = j = self.n  % shape[1]
+            im = (-i + 2 * self.i0) % N
+            jm = (-j + 2 * self.i0) % N
+
+            I = self.n.copy()
+            inv = im * N + jm
+            P2z = inv
+
+        # only cubes for now
+        assert(np.allclose(shape, self.N))
+        assert(symmetry in ['P1', 'C6', 'D6', 'inversion'])
+        assert(len(shape) in [2, 3])
+
+        sym_ops = [I]
+        if symmetry == 'inversion':
+            sym_ops.append(inv)
+
+        elif symmetry == 'D6':
+            sym_ops.append(P2z)
+            sym_ops.append(P2x)
+            sym_ops.append(inv)
+
+        elif symmetry == 'C6':
+            sym_ops.append(P2z)
+            sym_ops.append(inv)
+
+        elif symmetry == 'P1':
+            sym_ops.append(I)
+
+        self.sym_ops = sym_ops
+
+    def get_symmetry_partners(self, n):
+        out = [self.sym_ops[0][n]]
+
+        # apply cumulatively
+        for op in self.sym_ops[1:]:
+            N = len(out)
+            for i in range(N):
+                out.append(op[out[i]])
+
+        return set(out)
+
+    def get_asymmetric_unit(self):
+        """
+        loop over volume removing voxels
+        related to others by symmetry
+        """
+        n = self.n
+        m = np.ones(n.shape, dtype=bool)
+        for i in range(n.size):
+            if not m[i]: # not is much faster than ~m and m == False
+                continue
+            ns = self.get_symmetry_partners(i)
+            ns.remove(i)
+            if len(ns) > 0:
+                m[list(ns)] = False
+        return n[m]
+
+    def get_asymmetric_unit_mapping(self):
+        """
+        n: raveled model voxel location
+        m: raveled asymmetric unit voxel location
+        n = n_asy[m]
+        m = M_n[n]
+        """
+        N_m = self.get_asymmetric_unit()
+        M_n = np.zeros(self.n.size, dtype=int)
+        for m in range(N_m.size):
+            n = N_m[m]
+            ns = self.get_symmetry_partners(n)
+            for n in ns:
+                M_n[n] = m
+        return M_n
+
+    def apply_symmetry(self, ar, normalise=True):
+        out = np.zeros(ar.size, dtype=ar.dtype)
+        out[:] = ar.ravel()
+
+        # apply cumulatively
+        for op in self.sym_ops[1:]:
+            out += out[op]
+
+        return out.reshape(ar.shape)
+
+
+
+
 
 
 

@@ -262,11 +262,16 @@ def get_sparse_P_matrix(P_dr):
     # it's possible that no frames contribute to a given class
     logger.debug(f'average number of tomograms per frame: {Nr/D:.3f}')
 
-    logger.debug(f'minimum P value after threshold: '
-                 f'{np.min([min(P) for P in Ps_dr if len(P) > 0])}')
+    a = [min(P) for P in Ps_dr if len(P) > 0]
+    b = [max(P) for P in Ps_dr if len(P) > 0]
+    if len(a) > 0:
+        logger.debug(f'minimum P value after threshold: '
+                     f'{np.min(a)}')
 
-    logger.debug(f'maximum P value after threshold: '
-                 f'{np.max([max(P) for P in Ps_dr if len(P) > 0])}')
+        logger.debug(f'maximum P value after threshold: '
+                     f'{np.max([max(P) for P in Ps_dr if len(P) > 0])}')
+    else:
+        logger.debug('P == 0 for all orientation for this class')
 
     logger.debug('generating sparse P-matrix (stop)')
     return Ps_dr, rs_d, Nr

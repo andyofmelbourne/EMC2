@@ -202,7 +202,8 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.setWindowTitle(f'EMC summary: iteration {iteration}')
 
 
-def show_frames(cxi_fnam, sparse_fnam, frames, iteration=0, max_frames=500):
+def show_frames(cxi_fnam, sparse_fnam, frames, iteration=0, max_frames=100):
+    print(f'loading {frames=}')
     with h5py.File(sparse_fnam) as f:
         photon_sums = f['photon_sums'][frames]
         inds_s = np.argsort(photon_sums)[::-1]
@@ -222,18 +223,22 @@ def show_frames(cxi_fnam, sparse_fnam, frames, iteration=0, max_frames=500):
     with h5py.File(cxi_fnam) as f:
         data = f['entry_1/data_1/data']
         frames = np.zeros(
-            (len(frame_index),) + data.shape[1:], dtype=np.float32
+            (len(frame_index),) + data.shape[1:], dtype=data.dtype
         )
-        frames[:] = None
+
+        xyz = f['entry_1/instrument_1/detector_1/xyz_map'][()]
+        pixel_size = f['entry_1/instrument_1/detector_1/x_pixel_size'][()]
 
         for i, d in tqdm(enumerate(frame_index), total=frames.shape[0]):
             frames[i] = f['entry_1/data_1/data'][d]
 
         print('applying geometry to images')
-        ims, centre = utils.Geom_corr(return_centre=True).apply(frames)
+        # ims, centre = utils.Geom_corr(return_centre=True).apply(frames)
+        ims, centre = utils.Geom_corr_xyz(xyz, pixel_size, return_centre=True).apply(frames)
+
         im = pg.show(ims)
-        centre[0] -= 400e-6/200e06
-        centre[1] -= 4800e-6/200e06
+        # centre[0] -= 400e-6/200e06
+        # centre[1] -= 4800e-6/200e06
         # transposed b/c of row-major setting
         c = pg.CircleROI(centre[::-1], [1, 1], pen=pg.mkPen('r', width=2))
         im.addItem(c)
@@ -241,7 +246,7 @@ def show_frames(cxi_fnam, sparse_fnam, frames, iteration=0, max_frames=500):
 
 def write_good_frames(
     iter_fnam, cxi_fnam, sparse_fnam,
-    frames, good_classes, dset='/entry_1/2D_EMC/is_good'
+    frames, good_classes, dset='/entry_1/2D_EMC/is_good', add=False
 ):
     with h5py.File(sparse_fnam) as f:
         frame_index = f['frame_index'][frames]
@@ -254,10 +259,13 @@ def write_good_frames(
 
         print(f'writing {np.sum(is_good)} '
               f'labels to {cxi_fnam} in {dset}')
-        if dset in f:
-            f[dset][:] = is_good
+        if add:
+            f[dset][is_good] = True
         else:
-            f[dset] = is_good
+            if dset in f:
+                f[dset][:] = is_good
+            else:
+                f[dset] = is_good
 
     # write class list to iteration info
     with h5py.File(iter_fnam, 'r+') as f:
@@ -281,6 +289,10 @@ class ImageView(pg.ImageView):
         print('press "s" to save /entry_1/2D_EMC/is_good selection to '
               'cxi file and good_classes.pickle')
         print('press "b" to save /entry_1/2D_EMC/is_bad selection to '
+              'cxi file and good_classes.pickle')
+        print('press "d" to add to /entry_1/2D_EMC/is_bad selection in '
+              'cxi file and good_classes.pickle')
+        print('press "m" to save /entry_1/2D_EMC/is_misc selection to '
               'cxi file and good_classes.pickle')
 
         # class_id of last clicked class
@@ -326,17 +338,23 @@ class ImageView(pg.ImageView):
             else:
                 print(self.last_selected, args.cxi, self.most_likely_model_d)
 
-        elif key == 'S' or key == 'B':
+        elif key=='S' or key=='B' or key=='M' or key=='D':
             if (
                 args.cxi is not None
                 and self.most_likely_model_d is not None
                 and np.any(self.selection)
             ):
 
+                add = False
                 if key == 'S':
                     dset = '/entry_1/2D_EMC/is_good'
                 elif key == 'B':
                     dset = '/entry_1/2D_EMC/is_bad'
+                elif key == 'D':
+                    dset = '/entry_1/2D_EMC/is_bad'
+                    add = True
+                elif key == 'M':
+                    dset = '/entry_1/2D_EMC/is_misc'
 
                 # good_classes = np.where(self.selection)[0]
                 good_classes = np.unique(self.classes[self.selection])
@@ -348,7 +366,7 @@ class ImageView(pg.ImageView):
                 fnam_sparse = get_sparse_fnam(args.cxi, self.iteration)
                 write_good_frames(
                     args.fnam, args.cxi, fnam_sparse, frames, good_classes,
-                    dset=dset
+                    dset=dset, add=add
                 )
 
     def init_scatter(self):

@@ -116,56 +116,61 @@ if __name__ == "__main__":
 
     Ps_dr, rs_d, Nr = model_update_background_sparse.get_sparse_P_matrix(P_dr)
 
-    # re-initialising this makes it much faster
-    # probably large buffers slow it down
-    # should look into it
-    # could be cpu vs gpu
-    mapper = tomograms.Mapper(
-        class_c.model.ndim,
-        class_c.model.shape[0],
-        class_c.xyz,
-        class_c.mapping_matrix,
-        opencl_stuff['context'],
-        opencl_stuff['queue'],
-        interpolation=class_c.interpolation_forward
-    )
+    # check for empty Ps_dr
+    if np.max([len(P) for P in Ps_dr]) == 0:
+        counts_n = np.zeros((N,), dtype=int)
 
-    # get buffer size per-n
-    # number of pixels contributing to each model voxel
-    # N_n = sum_dsr{i: for K_di>0} delta(n - M_sri)
+    else:
+        # re-initialising this makes it much faster
+        # probably large buffers slow it down
+        # should look into it
+        # could be cpu vs gpu
+        mapper = tomograms.Mapper(
+            class_c.model.ndim,
+            class_c.model.shape[0],
+            class_c.xyz,
+            class_c.mapping_matrix,
+            opencl_stuff['context'],
+            opencl_stuff['queue'],
+            interpolation=class_c.interpolation_forward
+        )
 
-    rmax = np.max([len(rs) for rs in rs_d])
-    rmax = min(rmax, 32)
-    max_buf_shape = (mapper.shape[0],) + (rmax,) + (K_di_getter.litpix.max(),)
-    print(f'{max_buf_shape=}')
-    print(f'{np.prod(max_buf_shape)=}')
-    bincount = utils_cl.Bincount_cl(
-            N,
-            np.prod(max_buf_shape),
-            opencl_stuff_cpu['queue'],
-            opencl_stuff_cpu['context']
-    )
+        # get buffer size per-n
+        # number of pixels contributing to each model voxel
+        # N_n = sum_dsr{i: for K_di>0} delta(n - M_sri)
 
-    # N_n = np.zeros((N,), dtype=int)
-    mapper.cpu = True
-    for d in tqdm(range(dd), desc='calculating buffer sizes'):
-        if len(rs_d[d]) > 0:
-            Kd_i, pixels = K_di_getter.sparse(d)
-            # N_sri = mapper[:, rs_d[d], pixels]
-            index = 0
-            while index < len(rs_d[d]):
-                i = index
-                j = min(index+rmax, len(rs_d[d]))
-                rs = rs_d[d][i: j]
-                N_sri = mapper[:, rs, pixels]
-                bincount.add(N_sri)
-                index = j
-                # N_n += np.bincount(N_sri.ravel(), minlength=N_n.size)
+        rmax = np.max([len(rs) for rs in rs_d])
+        rmax = min(rmax, 32)
+        max_buf_shape = (mapper.shape[0],) + (rmax,) + (K_di_getter.litpix.max(),)
+        print(f'{max_buf_shape=}')
+        print(f'{np.prod(max_buf_shape)=}')
+        bincount = utils_cl.Bincount_cl(
+                N,
+                np.prod(max_buf_shape),
+                opencl_stuff_cpu['queue'],
+                opencl_stuff_cpu['context']
+        )
 
-    bincount.queue.finish()
-    counts_n = bincount.out
+        # N_n = np.zeros((N,), dtype=int)
+        mapper.cpu = True
+        for d in tqdm(range(dd), desc='calculating buffer sizes'):
+            if len(rs_d[d]) > 0:
+                Kd_i, pixels = K_di_getter.sparse(d)
+                # N_sri = mapper[:, rs_d[d], pixels]
+                index = 0
+                while index < len(rs_d[d]):
+                    i = index
+                    j = min(index+rmax, len(rs_d[d]))
+                    rs = rs_d[d][i: j]
+                    N_sri = mapper[:, rs, pixels]
+                    bincount.add(N_sri)
+                    index = j
+                    # N_n += np.bincount(N_sri.ravel(), minlength=N_n.size)
 
-    # assert(np.allclose(counts_n, N_n))
+        bincount.queue.finish()
+        counts_n = bincount.out
+
+        # assert(np.allclose(counts_n, N_n))
 
     print(f'{np.sum(counts_n)=}')
 

@@ -85,6 +85,7 @@ def geometry(
     C = Omega * P
 
     # scale
+    print(f'{np.sum(mask)=}')
     scale = 1/C[mask].max()
     logger.debug(f'scaling solid angle and polarisation factor by {scale}')
     C *= scale

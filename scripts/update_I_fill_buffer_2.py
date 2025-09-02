@@ -425,7 +425,7 @@ if __name__ == "__main__":
         j = fill_buffers.index0_m[m] + fill_buffers.counts_m[m]
         n = fill_buffers.n_asy[m+m_min]
         if j > i:
-            ns = sym.get_symmetry_partners(n)
+            ns = list(sym.get_symmetry_partners(n))
             c = np.sum(c_n[ns])
             out_m[m] = utils.solve_axbc(
                 a_n[i: j],
