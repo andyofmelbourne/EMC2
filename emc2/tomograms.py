@@ -350,7 +350,6 @@ class Mapper():
         self, dimensions, model_width, xyz, mapping_matrix,
         context, queue, interpolation='linear'
     ):
-
         if interpolation == 'linear':
             self.interpolation = 'LINEAR'
 
@@ -585,7 +584,6 @@ class Tomograms():
 
     def get(self):
         cl.enqueue_copy(self.queue, self.W_ri, self.W_ri_cl.data)
-
         return self.W_ri
 
     def __getitem__(self, key):

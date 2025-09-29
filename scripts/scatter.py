@@ -79,10 +79,10 @@ def get_plots(fnam, iteration):
     k = f'iteration_{iteration}/occupancy_dc'
     with h5py.File(fnam, 'r') as f:
         if k not in f:
-            return None 
-        
+            return None
+
         occ_dc = f[k][()]
-    
+
     occ_2d = np.dot(occ_dc, unit_vectors)
     return occ_2d
 
@@ -91,7 +91,7 @@ def get_plots(fnam, iteration):
 class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     def __init__(self, *args, **kwargs):
         super(GraphicsLayoutWidget, self).__init__(*args, **kwargs)
-        
+
         #self.scatter = self.addPlot(title=f'oocupancy per class per frame: iteration {iteration}')
         self.scatter = self.addPlot()
         #self.setWindowTitle(f'oocupancy per class per frame: iteration {iteration}')
@@ -136,13 +136,13 @@ class GraphicsLayoutWidget(pg.GraphicsLayoutWidget):
         self.scatter.plot(x, y, pen=None, symbolPen=None, symbolSize=5, symbolBrush=(100, 100, 255, 50), clear = True)
         #self.scatter.plot(unit_vectors[:, 0], unit_vectors[:, 1], pen = None, symbolPen=pg.mkPen('w'), symbolSize=10, symbolBrush=None, hoverable=True, hoverBrush = pg.mkBrush(255, 255, 255, 100), data = np.arange(unit_vectors.shape[0]))
         sc = pg.ScatterPlotItem(
-            unit_vectors[:, 0], 
-            unit_vectors[:, 1], 
-            pen=pg.mkPen('w'), 
-            size=10, 
-            brush=None,     
-            hoverable=True, 
-            hoverBrush = pg.mkBrush(255, 255, 255, 100), 
+            unit_vectors[:, 0],
+            unit_vectors[:, 1],
+            pen=pg.mkPen('w'),
+            size=10,
+            brush=None,
+            hoverable=True,
+            hoverBrush = pg.mkBrush(255, 255, 255, 100),
             data = np.arange(unit_vectors.shape[0])
         )
         self.scatter.addItem(sc)

@@ -70,6 +70,7 @@ There are three main computational steps:
     1. calculate P . K
     2. calculate voxel mapping n_sri
     3. merge N and D
+    4. apply symmetry
 
 If I had a faster way to share / pipe I would split
 these into separate processes for optimal load balancing

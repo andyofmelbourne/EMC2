@@ -19,6 +19,8 @@ def load_config(path):
     # returns a dict
     config = runpy.run_path(str(p.absolute()))
 
+    config.update(set_working_directory(p))
+
     return config
 
 
@@ -60,3 +62,5 @@ def get_iteration_number(config):
             logger.debug(f'Setting iteration to {iteration}')
 
     return iteration
+
+

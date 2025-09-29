@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 # I don't think this is safe
+# also, this should be a method of the tomograms class
+# since it is a function that applies almost exclusively to the
+# tomogram object
 def calculate_wsums_r(C_i, W_ri, r00, r11, r_chunk_size=32):
     # calculate tomogram sums
     R = r11-r00

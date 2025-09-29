@@ -51,7 +51,7 @@ $ python scripts/calculate_logR.py ~/Documents/2024/p7927/scratch/2D-EMC/Ery_tes
 ```
 
 ## Probability Matrix
-- [ ] normalise LogR matrix over all classes
+- [x] normalise LogR matrix over all classes
 
 ```bash
 $ python scripts/calculate_probability.py ~/Documents/2024/p7927/scratch/2D-EMC/Ery_test/class_*.h5 
@@ -59,14 +59,15 @@ $ python scripts/calculate_probability.py ~/Documents/2024/p7927/scratch/2D-EMC/
 needs all class files
 
 ## Models
-- [ ] update models for each class file
+- [x] update models for each class file
 
 ## Iteration Info
-- [ ] write summery information to iteration info for viewing
+- [x] write summery information to iteration info for viewing
 
 ## Utilities 
-- [ ] view iteration info script
-- [ ] script for executing pipeline
+- [x] view iteration info script
+- [x] script for executing pipeline
 - [ ] GUI for executing pipeline
-- [ ] script for submitting script to maxwell over ssh connection
+- [x] script for submitting script to maxwell over ssh connection
 - [ ] add command line arguments to overide defaults in class files
+- [ ] write generic maxwell run / get scripts with config as input
