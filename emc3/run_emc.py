@@ -12,7 +12,11 @@ beta = float(sys.argv[3])
 
 config = pickle.load(open(config_file, 'rb'))
 
-print(f"{config['classes'][0]['model'].data.shape=}")
+# load data
+for c in config['classes']:
+    c['data'].load_from_file()
+    c['P_data'].load_from_file()
+
 
 for i in range(iters):
     t0 = time.time()
@@ -27,6 +31,8 @@ for i in range(iters):
     emc3.update_models.update_model_basic(config)
     time_I = time.time() - t0
 
+    # save model slices
+    # -----------------
     dq = config['classes'][0]['model'].dq
     models = [c['model'].data for c in config['classes']]
     emc3.utils.save_model_slices(
@@ -35,9 +41,21 @@ for i in range(iters):
             config['working_directory']
             )
 
-    # save
-    pickle.dump(config, open(config_file, 'wb'))
+    # save extra info
+    # ---------------
 
     print(f'{time_logR=}')
     print(f'{time_prob=}')
     print(f'{time_I=}')
+
+
+# un-load data
+for c in config['classes']:
+    c['data'].unload()
+    c['P_data'].unload()
+    c['logR_dr'] = None
+    c['P_dr'] = None
+
+# save
+pickle.dump(config, open(config_file, 'wb'))
+

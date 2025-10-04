@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
         )
 from PyQt5.QtCore import Qt
 
+
 class MyMainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.centralWidget():

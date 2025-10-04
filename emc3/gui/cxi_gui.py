@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .h5_viewer import H5_viewer
 from ..utils import Geom_corr_xyz
+from ..data import DataSparseCXI_full_frame
 
 # add automatic geometry correction for multipanel datasets
 class Geom_filter():

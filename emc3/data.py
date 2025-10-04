@@ -22,6 +22,7 @@ class RawDataGetterBase():
     mask = None
     source_dtype = None
     source_shape = None
+    fnam = None
 
     def __init__(self):
         pass
@@ -49,7 +50,8 @@ class RawDataGetterCXI(RawDataGetterBase):
             data_path='/entry_1/data_1/data',
             mask=None,
             frames=None,
-            dtype=None):
+            dtype=None,
+            fnam=None):
 
         self.cxi_file = cxi_file
         self.data_path = data_path
@@ -57,6 +59,14 @@ class RawDataGetterCXI(RawDataGetterBase):
         self.check_data(mask, frames, dtype)
 
         self.is_loaded = False
+
+        # for saving / loading
+        if fnam is None:
+            self.fnam = self._get_fnam()
+
+    def _get_fnam(self):
+        fnam = f'data_{id(self)}.h5'
+        return fnam
 
     def check_data(self, mask, frames, dtype):
         with h5py.File(self.cxi_file) as f:
@@ -144,7 +154,11 @@ class SparseData():
 
         assert (len(self.shape) == 2)
 
-        # instead of storing the locations of both
+        self._init_vars()
+
+    def _init_vars(self):
+        shape = self.shape
+
         self.row_inds = []
         self.non_zero_values = []
         self.indptr = np.zeros(1+shape[0], dtype=np.int32)
@@ -177,6 +191,9 @@ class SparseData():
         self.non_zero_values = np.concatenate(self.non_zero_values)
         self.indptr[1:] = np.cumsum(self.litpix)
 
+        self._construct_csr_matrix()
+
+    def _construct_csr_matrix(self):
         # prevent data duplication
         self.csr = csr_matrix(self.shape, dtype=self.dtype)
         self.csr.data = self.non_zero_values
@@ -190,6 +207,33 @@ class SparseData():
             raise ValueError('need to load all frames before calling!')
 
         return self.csr[key].toarray()
+
+    def save_to_file(self, fnam):
+        if not self.is_loaded:
+            raise ValueError('need to load all frames before saving!')
+
+        with h5py.File(fnam, 'w') as f:
+            f['data'] = self.non_zero_values
+            f['indices'] = self.row_inds
+            f['indptr'] = self.indptr
+            f['total_row_counts'] = self.total_row_counts
+
+    def load_saved_data(self, fnam):
+        with h5py.File(fnam, 'r') as f:
+            self.non_zero_values = f['data'][()]
+            self.row_inds = f['indices'][()]
+            self.indptr = f['indptr'][()]
+            self.total_row_counts = f['total_row_counts'][()]
+
+        self.litpix = np.diff(self.indptr)
+
+        self._construct_csr_matrix()
+
+    def unload(self):
+        """
+        delete data to free memory
+        """
+        self._init_vars()
 
 
 class RawDataGetterSparseCXI(RawDataGetterCXI):
@@ -229,6 +273,23 @@ class RawDataGetterSparseCXI(RawDataGetterCXI):
         assert (self.data.is_loaded)
         self.is_loaded = True
 
+    def save_to_file(self):
+        self.data.save_to_file(self.fnam)
+
+        # add mask and frames info
+        with h5py.File(self.fnam, 'r+') as f:
+            f['mask'] = self.mask
+            f['frames'] = self.frames
+
+    def load_from_file(self):
+        self.data.load_saved_data(self.fnam)
+
+    def unload(self):
+        """
+        delete data to free memory
+        """
+        self.data.unload()
+
 
 class Data():
     """
@@ -259,6 +320,11 @@ class DataCXI(RawDataGetterCXI):
 class DataSparseCXI(RawDataGetterSparseCXI):
     """
     Interface to data from an x-ray pixel detector over a number of events.
+
+    RawDataGetterBase
+      -> RawDataGetterCXI
+        -> RawDataGetterSparseCXI (uses SparseData)
+          -> DataSparseCXI
     """
     def __init__(self, cxi_file, detector, mask, frames, **kwargs):
         super().__init__(cxi_file, mask=mask, frames=frames)
@@ -266,3 +332,53 @@ class DataSparseCXI(RawDataGetterSparseCXI):
         # polarisation and solid angle correction factor:
         # N_i = C_i I(q_i)
         self.C_i = detector.C[mask]
+
+    def save_to_file(self):
+        """
+        add pixel_size and xyz coords to file for viewing
+        """
+        super().save_to_file()
+        if not self.is_loaded:
+            raise ValueError('need to load all frames before saving!')
+
+        with h5py.File(self.fnam, 'r+') as f:
+            f['pixel_size'] = self.detector.pixel_size
+            f['xyz_map'] = self.detector.xyz
+
+
+class DataSparseCXI_full_frame():
+    """
+    load data saved by DataSparseCXI as a numpy like object:
+        fnam = 'data_126376212075904.h5'
+        a = DataSparseCXI_full_frame(fnam)
+        a[0] yields an array with the same shape as the detector mask
+    """
+    def __init__(self, fnam):
+        self.fnam = fnam
+        self.load()
+
+    def load(self):
+        # load sparse data
+        with h5py.File(self.fnam, 'r') as f:
+            self.mask = f['mask'][()]
+            self.dtype = f['data'].dtype
+            self.pixel_size = f['pixel_size'][()]
+            self.frames = f['frames'][()]
+            self.xyz_map = f['xyz_map'][()]
+
+        self.shape = (len(self.frames),) + self.mask.shape
+        self.unmasked_pixels = np.sum(self.mask)
+        self.masked_shape = (len(self.frames), self.unmasked_pixels)
+        self.data = SparseData(self.masked_shape, self.dtype)
+        self.data.load_saved_data(self.fnam)
+
+    def __getitem__(self, key):
+        masked_data = np.atleast_2d(self.data[key])
+        s = masked_data.shape
+
+        out = np.zeros((s[0],) + self.shape[1:], dtype=self.dtype)
+
+        for i, d in enumerate(masked_data):
+            out[i][self.mask] = d
+
+        return np.squeeze(out)
