@@ -25,5 +25,5 @@ def make_mask(det, model, xyz_offset=[[0, 0, 0]], scale=1, padding=[0, 0]):
     qmin += model.dq * padding[0]
     qmax -= model.dq * padding[1]
 
-    mask = (det.qr >= qmin) * (det.qr < qmax)
+    mask = det.mask * (det.qr >= qmin) * (det.qr < qmax)
     return mask

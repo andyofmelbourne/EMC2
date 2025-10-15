@@ -15,18 +15,21 @@ from .cxi_gui import CXI_viewer
 from .mask_gui import Mask_maker
 from .iteration_gui import Iteration_gui
 from .window_menu_tabs import MainWindow
+from .ssh_widget import SSHWidget
 
 def main(directory):
     app = QApplication(sys.argv)
     cxi_viewer = lambda : CXI_viewer(directory)
     mask_maker = lambda : Mask_maker(directory)
     iteration_viewer = lambda : Iteration_gui(directory)
+    ssh_widget = lambda : SSHWidget()
 
     # Example dictionary
     gui_structure = {
         'cxi_viewer': cxi_viewer,
         'mask_maker': mask_maker,
         'iteration_viewer': iteration_viewer,
+        'ssh_widget': ssh_widget,
     }
 
     signal.signal(signal.SIGINT, signal.SIG_DFL) # allow Control-C

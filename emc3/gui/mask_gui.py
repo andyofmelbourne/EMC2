@@ -48,6 +48,21 @@ class MaskMakerOptions(QDialog):
         hbox.addWidget(self.unmask_checkbox)
         layout.addLayout(hbox)
 
+        # show / hide checkboxes
+        self.show_checkbox = QCheckBox('show')
+        self.hide_checkbox = QCheckBox('hide')
+        self.show_checkbox.setChecked(True)
+
+        toggle_group2 = QButtonGroup(self)
+        toggle_group2.addButton(self.show_checkbox)
+        toggle_group2.addButton(self.hide_checkbox)
+        toggle_group2.setExclusive(True)
+
+        hbox = QHBoxLayout()
+        hbox.addWidget(self.show_checkbox)
+        hbox.addWidget(self.hide_checkbox)
+        layout.addLayout(hbox)
+
         # rectangular ROI selection
         self.roi = pg.RectROI([-200,-200], [100, 100])
         # make sure ROI is drawn above image
@@ -109,17 +124,12 @@ class MaskMaker_plot_widget():
         self.mask = None
         self.options = None
 
-    def update_filter(self, filter):
-        self.plot_widget.filter = filter
+    def plot(self, data, name=None):
+        self.check_data(data)
 
-    def update_data(self, data, name=None):
-        # this also applies geom filter
-        print(f'{self.plot_widget.filter=}')
         self.plot_widget.plot(data, name=name)
 
         data = self.plot_widget.current_plot.data
-
-        self.check_data(data)
 
         # if this is the first call then set mask
         if self.mask is None:
@@ -195,6 +205,14 @@ class MaskMaker_plot_widget():
 
             self.options.save_button.clicked.connect(
                     lambda : self.save(self.options.save_field.text())
+                    )
+
+            self.options.show_checkbox.toggled.connect(
+                    lambda c: c and self.update_overlay()
+                    )
+
+            self.options.hide_checkbox.toggled.connect(
+                    lambda c: c and self.update_overlay()
                     )
 
             self.options.load_current_button.clicked.connect(self.load)
@@ -280,9 +298,13 @@ class MaskMaker_plot_widget():
         self.update_overlay()
 
     def update_overlay(self):
-        self.mask_image.ravel()[self.n_i] = self.mask.ravel()
-        self.mask_rgba[~self.mask_image] = [0, 0, 255, 255]
-        self.mask_rgba[self.mask_image] = [0, 0, 0, 0]
+        if self.options.show_checkbox.isChecked():
+            self.mask_image.ravel()[self.n_i] = self.mask.ravel()
+            self.mask_rgba[~self.mask_image] = [0, 0, 255, 255]
+            self.mask_rgba[self.mask_image] = [0, 0, 0, 0]
+        else:
+            self.mask_rgba[:] = [0, 0, 0, 0]
+
         self.mask_img_item.setImage(self.mask_rgba)
 
     def add_mouse_clicked(self):
@@ -319,70 +341,16 @@ class Mask_maker(CXI_viewer):
         # modify plot_widget
         self.mask_widget = MaskMaker_plot_widget(self.plot_widget)
 
-        self.filter = None
+    def open(self, fnam, name, where='main'):
+        widget = self.mask_widget
 
-    def on_item_path_clicked(self, path_list):
-        """
-        set filter and launch mask plot widget
-        do not change later (user can close and reopen for that)
-        """
-        # path = "/" + "/".join(path_list)
-        data_dict = self.h5_list_widget.path_to_file_dataset(path_list)
+        for g in self.getters:
+            try:
+                data = g(fnam, name)
+                break
+            except Exception as e:
+                print(e)
+                pass
 
-        if data_dict is None:
-            return
-
-        name = data_dict['dataset']
-        fnam = data_dict['fnam']
-        data = h5py.File(fnam)[name]
-
-        modifiers = QApplication.keyboardModifiers()
-
-        if self.filter is None:
-            if fnam in self.filters:
-                print(f'setting geometry filter for {fnam}')
-                self.filter = self.filters[fnam]
-            else:
-                self.filter = lambda x: x
-        else:
-            # check if filter can be applied to new data
-            if self.filter.check(data):
-                # update filter data if needed
-                print('clicked data is consistent with current filter')
-            else:
-                print('clicked data is not consistent with current filter')
-                return
-
-        # data = self.filter(data)
-        print(f'{data=} {name=}')
-        self.mask_widget.update_filter(self.filter)
-        self.mask_widget.update_data(data, name=name)
-
-
-if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal.SIG_DFL) # allow Control-C
-
-    pg.setConfigOption('background', pg.mkColor(0.1))
-
-    app = QApplication(sys.argv)
-
-    # fnam = '/home/andyofmelbourne/Documents/2025/LCLS-CXI-1008449/data/r0087_radial_profiles.h5'
-    if len(sys.argv) > 1:
-        fnam = sys.argv[1]
-    else:
-        # fnam = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits_no_mask.cxi'
-        # fnam = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits.cxi'
-        fnam = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/'
-
-    fnams = [str(f) for f in Path(fnam).glob('*.cxi')]
-
-    geom_filter = {}
-    for f in fnams:
-        geom_filter[f] = get_geometry_filter(f)
-
-    window = H5_viewer(fnam, filters=geom_filter)
-    window.setWindowTitle("CXI viewer")
-    window.resize(800, 400)
-    window.show()
-
-    sys.exit(app.exec_())
+        # print(f'{data.shape=} {name=}')
+        widget.plot(data, name=name)

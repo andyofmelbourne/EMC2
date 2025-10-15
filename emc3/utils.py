@@ -2,7 +2,13 @@ import h5py
 from pathlib import Path
 import numpy as np
 import math
+import argparse
 
+class MyFormatter(
+    argparse.ArgumentDefaultsHelpFormatter,
+    argparse.RawDescriptionHelpFormatter
+):
+    pass
 
 def chunker(chunksize, size, offset=0):
     assert (size > 0)
@@ -67,12 +73,66 @@ def save_model_slices(
                 del g[k]
 
             if k not in g:
-                g.create_dataset(k, data=v, chunks=v.shape, compression='gzip')
+                g.create_dataset(k, data=v, chunks=v.shape, compression='gzip',
+                                 compression_opts=1)
 
         k = 'model_dq'
         if k in g:
             del g[k]
         g[k] = model_dq
+
+
+def save_data_info(
+    frames_d,
+    frame_labels_j,
+    DOS,
+    D,
+    working_directory
+):
+    fnam = Path(working_directory).joinpath('iteration_info.h5')
+
+    # get iteration number
+    if fnam.is_file():
+        with h5py.File(fnam, 'r') as f:
+            N = f['iterations'][()]-1
+    else:
+        raise ValueError(f'could not find {fnam}! Data info not saved')
+
+    with h5py.File(fnam, 'r+') as f:
+        k = f'iteration_{N}'
+        if k not in f:
+            g = f.create_group(k)
+        else:
+            g = f[k]
+
+        out = {'frames': frames_d}
+
+        if DOS is not None:
+            out['DOS'] = DOS
+
+        if frame_labels_j is not None:
+            for k, v in frame_labels_j.items():
+                out[f'frame_labels/{k}'] = v[frames_d]
+
+        # save class labels if possible
+        k = f'most_likely_model_d'
+        if k in g:
+            # d: subset of frames index
+            m_d = g[k][()]
+            # j: global frame index
+            labels_j = -np.ones(D, dtype=int)
+            labels_j[frames_d] = m_d
+            out['class_labels'] = labels_j
+
+        for k, v in out.items():
+            if k in g and g[k].shape == v.shape:
+                g[k][:] = v
+
+            elif k in g and g[k].shape != v.shape:
+                del g[k]
+
+            if k not in g:
+                g.create_dataset(k, data=v)
 
 
 class Geom_corr_xyz():
@@ -123,6 +183,7 @@ class Geom_corr_xyz():
         self.size = N * M
         self.image = np.zeros((M*N,), dtype=np.float32)
         self.image.fill(np.nan) # shows as background
+        self.dtype = self.image.dtype
         self.frame_shape = x.shape
         self.return_centre = return_centre
 

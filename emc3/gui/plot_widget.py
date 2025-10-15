@@ -45,14 +45,9 @@ class PlotWidget(QWidget):
     I have a layout and keep track of the list of open PlotWidgets (which
     may be in separate windows)
     """
-    def __init__(self, parent=None, filter=None, open_plots=[]):
+    def __init__(self, parent=None, open_plots=[]):
 
         super().__init__(parent)
-
-        if filter is not None:
-            self.filter = filter
-        else:
-            self.filter = lambda x: x
 
         self.open_plots = open_plots
         self.open_plots.append(self)
@@ -98,7 +93,6 @@ class PlotWidget(QWidget):
     def plot(self, data, name=None):
         self.remove_current_plot()
 
-        data = self.filter(data)
         self.data = data
 
         Widget = self.choose_widget(data)
@@ -107,7 +101,6 @@ class PlotWidget(QWidget):
                 parent=self,
                 data=data,
                 title=name,
-                filter=self.filter,
                 open_plots=self.open_plots
                 )
 
@@ -332,7 +325,7 @@ class PlotItem(pg.PlotItem):
 
 class PlotWidgetBase(QWidget):
     def __init__(self, parent=None, title="Data Plot", xlabel=None,
-                 ylabel=None, data=None, filter=None, open_plots=[], **kwargs):
+                 ylabel=None, data=None, open_plots=[], **kwargs):
         super().__init__(parent)
 
         self.title = title
@@ -462,6 +455,9 @@ class PlotWidget2D(PlotWidgetBase):
         # Add the ImageItem
         self.img_item = pg.ImageItem()
         self.plot_item.addItem(self.img_item)
+
+        # hide grid
+        self.plot_item.showGrid(x=True, y=True)
 
         # set defaults
         self.autoRange = True

@@ -135,8 +135,12 @@ class Mapper():
         self.model_shape = model.shape
         self.shape = (S, J*K*L)
         self.offsets = np.array(offsets)
+        self.mask = None
 
     def load_coords(self, mask):
+        if mask is self.mask:
+            return
+
         # make sure it's ready to load onto gpu
         pixels = np.sum(mask)
         self.r = np.ones((pixels, 4), dtype=np.float32)

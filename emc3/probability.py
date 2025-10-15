@@ -254,5 +254,7 @@ def calculate_P(config, beta):
     prob.save_class(config['working_directory'], update_probability_c, 0, D)
     prob.save_iteration(config['working_directory'])
 
+    config['most_likely_model_d'] = prob.class_max_d
+
     for ci, c in enumerate(config['classes']):
         c['P_dr'] = P_dr[:, c['r_offset']: c['r_offset'] + Rs[ci]]

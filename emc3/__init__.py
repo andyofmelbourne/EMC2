@@ -14,3 +14,4 @@ from .mapper import Mapper
 from .tomograms import Tomograms
 from .likelihood import Likelihood
 from .classes import make_config
+from .degree_of_separation import calculate_DOS

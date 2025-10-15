@@ -34,41 +34,10 @@ def open_in_window(widget, title="New Window", size=(400, 300)):
     return window
 
 
-class DataGetter_h5:
-    def __init__(self, fnam, dataset, size_limit_gb=1):
-        self.fnam = fnam
-        self.dataset = dataset
-
-        self.refresh()
-        """
-        if (self.nbytes / 1024**3) < size_limit_gb:
-            self.data = f[dataset][()]
-        else:
-            self.data = None
-        """
-
-    def refresh(self):
-        fnam, dataset = self.fnam, self.dataset
-
-        with h5py.File(fnam) as f:
-            self.ndim = f[dataset].ndim
-            self.shape = f[dataset].shape
-            self.size = np.prod(self.shape)
-            self.dtype = f[dataset].dtype
-            self.nbytes = f[dataset].nbytes
-
-    def __len__(self):
-        return self.shape[0]
-
-    def __getitem__(self, key):
-        with h5py.File(self.fnam) as f:
-            return f[self.dataset][key]
-
-
 class H5_viewer(QWidget):
-    def __init__(self, fnam, filters=[], parent=None):
+    def __init__(self, fnam, getters=[], parent=None):
         super().__init__(parent)
-        self.filters = filters
+        self.getters = getters
         self.fnam = fnam
         self.fnams = None
 
@@ -81,11 +50,9 @@ class H5_viewer(QWidget):
         self.open_plots = []
         self.wins = []
 
-        # apply a data filter and tell the plot widget
-        # about the other open windows
+        # tell the plot widget about the other open windows
         self.plot_widget = PlotWidget(
                 parent=self,
-                filter=None,
                 open_plots=self.open_plots)
 
         # Layout
@@ -158,17 +125,18 @@ class H5_viewer(QWidget):
         self.open(fnam, name, where=where)
 
     def open(self, fnam, name, where='main'):
-        if fnam in self.filters:
-            filter = self.filters[fnam]
-        else:
-            filter = lambda x: x
-
         if where == 'window' or where == 'splitter':
-            widget = PlotWidget(filter=filter, open_plots=self.open_plots)
+            widget = PlotWidget(open_plots=self.open_plots)
         else:
             widget = self.plot_widget
 
-        data = DataGetter_h5(fnam, name)
+        for g in self.getters:
+            try:
+                data = g(fnam, name)
+                break
+            except Exception as e:
+                print(e)
+                pass
 
         if where == 'window':
             self.wins.append(
@@ -181,9 +149,6 @@ class H5_viewer(QWidget):
 
         elif where == 'splitter':
             self.vsplitter.addWidget(widget)
-
-        else:
-            widget.filter = filter
 
         widget.plot(data, name=name)
 

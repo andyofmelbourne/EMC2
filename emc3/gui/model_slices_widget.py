@@ -93,14 +93,23 @@ class ImageView(pg.ImageView):
             title, (arrays_i, labels_i, info_i) = \
                 self.array_getter._increment(gkey=key)
 
+        plot = self.getView()
+        plot.setTitle(title)
+
+        if (
+                arrays_i is None
+                or labels_i is None
+                or info_i is None
+                ):
+            self.updating = False
+            return None
+
         self.info_i = info_i
         self.labels_i = labels_i
 
         im, self.pos_i, self.N_i = make_2D_image(arrays_i)
         im[im == 0] = np.nan
 
-        plot = self.getView()
-        plot.setTitle(title)
         self.setImage(
             im**self.pow,
             autoRange=False,
@@ -268,8 +277,19 @@ class BaseIterationInfo_getter(QObject):
                 g = f[gkey]
 
             for key in self.keys:
-                if key in g:
-                    data.append(g[key][()])
+                data.append(self._get_from_h5(g, key))
+        return data
+
+    def _get_from_h5(self, h5obj, key):
+        if key in h5obj:
+            if isinstance(h5obj[key], h5py.Dataset):
+                data = h5obj[key][()]
+            elif isinstance(h5obj[key], h5py.Group):
+                data = {}
+                for k in h5obj[key].keys():
+                    data[k] = self._get_from_h5(h5obj[key], k)
+        else:
+            data = None
 
         return data
 
@@ -307,8 +327,11 @@ class SliceGetter(QObject):
                 self.itget._increment(inc=inc, gkey=gkey)
 
         # add number of frames per slice to info
-        frames_c = np.bincount(model_d)[slices_id]
-        info = [{'frames': i} for i in frames_c]
+        if model_d is not None and slices_id is not None:
+            frames_c = np.bincount(model_d, minlength=len(slices_id))[slices_id]
+            info = [{'frames': i} for i in frames_c]
+        else:
+            info = None
         return t, (slices, slices_id, info)
 
     def next(self):

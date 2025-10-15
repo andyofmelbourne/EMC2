@@ -68,6 +68,7 @@ class ScatterPlotWidget(QWidget):
         # Plot area
         self.plot_widget = pg.PlotWidget()
         layout.addWidget(self.plot_widget)
+        self.plot_widget.addLegend()
 
         # Store items
         self.scatter_items = []
@@ -110,7 +111,6 @@ class ScatterPlotWidget(QWidget):
         super().keyPressEvent(event)
         key = keys_mapping[event.key()]
 
-
         if key == 'Right' :
             self.rightarrow.emit()
 
@@ -144,7 +144,7 @@ class EMC_scatter_widget(QWidget):
         self.updating = False
 
         # add occupancy getter
-        self.keys = ['occupancy_dc']
+        self.keys = ['occupancy_dc', 'frame_labels']
         self.itget = BaseIterationInfo_getter(self.fnam, self.keys)
         self.iterationChanged = self.itget.iterationChanged
 
@@ -168,13 +168,20 @@ class EMC_scatter_widget(QWidget):
                     'brush': None,
                     'hoverable': True,
                     'hoverBrush': pg.mkBrush(255, 255, 255, 100),
-                    'data': None
+                    'data': None,
+                    'name': 'classes'
                     }
 
         self.frame_style = {
                 "brush": (100, 100, 255, 50),
                 "size": 5,
-                "pen": None
+                "pen": None,
+                "name": 'frames'
+                }
+
+        self.styles = {
+                'unit': self.unit_style,
+                'frames': self.frame_style
                 }
 
         self.uxy_c = None
@@ -222,7 +229,21 @@ class EMC_scatter_widget(QWidget):
         self.updating = True
 
         # get occupancy
-        title, Q_dc = self.itget._increment(inc=inc, gkey=gkey)
+        title, Q_dc, _labels_d = self.itget._increment(inc=inc, gkey=gkey)
+
+        if _labels_d is None:
+            labels_d = {
+                    'frames': np.arange(Q_dc.shape[0]),
+                    }
+        else:
+            labels_d = {}
+            a = np.ones(len(Q_dc), dtype=bool)
+
+            for k, v in _labels_d.items():
+                labels_d[k] = np.where(v)[0]
+                a[labels_d[k]] = False
+
+            labels_d['frames'] = np.where(a)[0]
 
         self.title = title
         self.parent().setWindowTitle(self.title)
@@ -231,12 +252,20 @@ class EMC_scatter_widget(QWidget):
         self.unit_vectors(Q_dc.shape[1])
         self.Qxy_d = np.dot(Q_dc, self.uxy_c)
 
-        data = [
-            {
-                "style": self.frame_style,
-                "points": self.Qxy_d,
-            }
-        ]
+        data = []
+        for label, frames in labels_d.items():
+            if label in self.styles:
+                style = self.styles[label]
+            else:
+                style = {
+                "brush": tuple(np.random.randint(0, 256, 3)) + (255,),
+                "size": 5,
+                "pen": None,
+                "name": label
+                }
+                self.styles[label] = style
+
+            data.append({"style": style, "points": self.Qxy_d[frames]})
 
         data.append(self.u_data)
 

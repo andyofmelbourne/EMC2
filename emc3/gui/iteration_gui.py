@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (
 
 from .h5_viewer import H5_viewer
 from .emc_scat_widget import EMC_scatter_widget
+from .getters import DataGetter_h5, GeomGetterCXI_h5, GeomGetterSparseCXI_h5
 
 class Iteration_gui(Model_slice_widget):
     def __init__(self, directory, parent=None):
@@ -16,7 +17,8 @@ class Iteration_gui(Model_slice_widget):
 
         # line plots in separate window
         # -----------------------------
-        self.plots_widget = H5_viewer(fnam)
+        getters = [GeomGetterSparseCXI_h5, GeomGetterCXI_h5, DataGetter_h5]
+        self.plots_widget = H5_viewer(fnam, getters=getters)
         self.plots_window = QMainWindow()
         self.plots_window.setWindowTitle('plots')
         self.plots_window.setCentralWidget(self.plots_widget)
@@ -24,7 +26,7 @@ class Iteration_gui(Model_slice_widget):
         self.plots_window.resize(800, 800)
         self.plots_window.show()
 
-        self.plots_widget.open(fnam, 'Q', where='splitter')
+        self.plots_widget.open(fnam, 'Q', where='main')
         self.plots_widget.open(fnam, 'beta', where='splitter')
         self.plots_widget.open(fnam, 'class_changes', where='splitter')
         self.plots_widget.open(fnam, 'orientation_changes', where='splitter')

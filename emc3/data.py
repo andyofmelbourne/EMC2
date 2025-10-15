@@ -23,6 +23,8 @@ class RawDataGetterBase():
     source_dtype = None
     source_shape = None
     fnam = None
+    source_shape = None
+    source_dtype = None
 
     def __init__(self):
         pass
@@ -149,6 +151,8 @@ class SparseData():
         self.shape = shape
         self.dtype = dtype
         self.size = np.prod(shape)
+        self.buffer = None
+        self.last_key = None
 
         self.dtype_inds = np.min_scalar_type(shape[1])
 
@@ -206,7 +210,13 @@ class SparseData():
         if not self.is_loaded:
             raise ValueError('need to load all frames before calling!')
 
-        return self.csr[key].toarray()
+        if key == self.last_key:
+            return self.buffer
+
+        self.last_key = key
+        self.buffer = self.csr[key].toarray()
+
+        return self.buffer
 
     def save_to_file(self, fnam):
         if not self.is_loaded:
@@ -219,6 +229,9 @@ class SparseData():
             f['total_row_counts'] = self.total_row_counts
 
     def load_saved_data(self, fnam):
+        if self.is_loaded:
+            return
+
         with h5py.File(fnam, 'r') as f:
             self.non_zero_values = f['data'][()]
             self.row_inds = f['indices'][()]

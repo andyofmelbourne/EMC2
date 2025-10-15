@@ -156,7 +156,7 @@ class Update_model_class():
         # -----------------
         t0 = time()
         D_ri = self._calc_D()
-        print(f'D_ri time:', time() - t0)
+        # print(f'D_ri time:', time() - t0)
 
         if self.maximise == 'W':
             D_ri[D_ri == 0] = 1.
@@ -180,7 +180,7 @@ class Update_model_class():
             mtime += time() - t0
 
             t0 = time()
-            for s in tqdm(range(n_sri.shape[0]), leave=False):
+            for s in range(n_sri.shape[0]):
                 for r in range(n_sri.shape[1]):
                     N_n += np.bincount(
                         n_sri[s, r],
@@ -195,8 +195,8 @@ class Update_model_class():
                     )
             btime += time() - t0
 
-        print(f'mapping time:', mtime)
-        print(f'bincount time:', btime)
+        # print(f'mapping time:', mtime)
+        # print(f'bincount time:', btime)
 
         sym = symmetry.Symmetry(
                 self.model.i0,
