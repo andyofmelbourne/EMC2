@@ -245,7 +245,18 @@ class Mapper_cl():
         self.context = context
         self.mapper = mapper
 
+        self.s_chunk_size = None
+        self.r_chunk_size = None
+        self.ravel = None
+
     def load_buffers(self, s_chunk_size=1, r_chunk_size=1, ravel=False):
+        if (
+            ravel == self.ravel
+            and s_chunk_size == self.s_chunk_size
+            and r_chunk_size == self.r_chunk_size
+        ):
+            return
+
         if ravel:
             self.n_ri = np.empty((s_chunk_size, r_chunk_size,
                                   self.mapper.pixels),
@@ -262,6 +273,10 @@ class Mapper_cl():
                               mf.COPY_HOST_PTR, hostbuf=self.mapper.r)
         self.n_cl = cl.Buffer(self.context, mf.READ_WRITE,
                               self.n_ri.nbytes)
+
+        self.ravel = ravel
+        self.s_chunk_size = s_chunk_size
+        self.r_chunk_size = r_chunk_size
 
     def calculate_mapping(self, s, r0, r1, ravel=False, cpu=True, n_cl=None):
         if ravel:

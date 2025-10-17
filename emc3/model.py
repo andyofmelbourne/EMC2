@@ -16,14 +16,22 @@ class Model():
             shape=None,
             dq=None,
             i0=None,
-            symmetry='P1'
+            symmetry='P1',
+            class_id=None,
             ):
 
         self.shape = shape
         self.size = np.prod(shape)
         self.dq = dq
-        self.data = np.empty(self.shape, dtype=float)
+        self.data = None
+        self.dtype = np.float64
+        self.ndim = len(shape)
         self.symmetry = symmetry
+
+        if class_id is None:
+            class_id = id(self)
+
+        self.class_id = class_id
 
         # require cube
         for s in shape:
@@ -37,17 +45,7 @@ class Model():
         self.qmax = dq * max(abs(self.i0), abs(shape[0]-1-self.i0))
 
     def init_random(self):
-        self.data[:] = np.random.random(self.data.shape)
-
-
-def Model_from_file(class_file):
-    with h5py.File(class_file) as f:
-        model = Model(
-                dq=f['dq'][()],
-                shape=f['model'].shape
-                )
-        model.data[:] = f['model'][()]
-    return model
+        self.data = np.random.random(self.shape)
 
 
 def update_I_class(c):

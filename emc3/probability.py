@@ -9,6 +9,9 @@ from .utils_cl import opencl_init_cpu
 from .utils import chunker
 from . import input_output
 
+import warnings
+# warnings.filterwarnings("ignore", category=cl.CompilerWarning)
+os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
 
 cl_code = """
     // optimised for cpu with one worker per d
@@ -80,7 +83,6 @@ cl_code = """
     }}
 """
 
-
 class Probability():
     """
     Normalise the log-likelihood array over all r's to produce a
@@ -127,6 +129,7 @@ class Probability():
         self.queue = cl_cpu['queue']
         self.context = cl_cpu['context']
         self.cl_cpu_code = cl.Program(self.context, cl_code).build()
+        self.normalise_P_dr = cl.Kernel(self.cl_cpu_code, "normalise_P_dr")
 
     def calculate(self, logR_dr, d00, d11):
         D, R = logR_dr.shape
@@ -152,7 +155,7 @@ class Probability():
         assert (logR_dr.flags['C_CONTIGUOUS'])
 
         for d0, d1, dd in d_iter:
-            self.cl_cpu_code.normalise_P_dr(
+            self.normalise_P_dr(
                 self.queue,
                 (dd,),
                 None,
@@ -187,22 +190,17 @@ class Probability():
 
         return P_dr
 
-    def save_class(self, working_directory, update_probability_c, d0, d1):
-        class_files = [
-            Path(working_directory).joinpath(f'class_{c}_probability.h5')
-            for c in range(self.models)
-        ]
-
+    def save_P_dr(self, fnams, update_probability_c, d0, d1):
         index = 0
-        for c, fnam in enumerate(class_files):
+        for c, fnam in enumerate(fnams):
             r0, r1 = index, index + self.Rs[c]
-            with h5py.File(fnam, 'r+') as f:
-                if update_probability_c[c]:
-                    f['probability_matrix'][d0:d1] = self.P_dr[:d1-d0, r0:r1]
-                    f['beta'][...] = self.beta
-                else:
-                    logger.info('update_probability is False '
-                                f'skipping update for class {c}')
+            if update_probability_c[c]:
+                with h5py.File(fnam, 'r+') as f:
+                    f['P_dr'][d0:d1, :] = self.P_dr[:d1-d0, r0:r1]
+                    f['beta'] = self.beta
+            else:
+                logger.info('update_probability is False '
+                            f'skipping update for class {c}')
             index = r1
 
     def save_iteration(self, working_directory):
@@ -236,25 +234,29 @@ def calculate_P(config, beta):
         R_c = c['mapper'].shape[1]
         Rs.append(R_c)
         r0 = c['r_offset']
-        class_r[r0:r0+R_c] = c['class_id']
-        logR_dr[:, r0:r0+R_c] = c['logR_dr']
+        class_r[r0:r0+R_c] = ci
+
+        # load logR for class ci
+        with h5py.File(c['logR_file']) as f:
+            logR_dr[:, r0:r0+R_c] = f['logR_dr'][()]
+            D, R = f['logR_dr'].shape
+
         update_probability_c[ci] = c['update_probability']
 
-        # inititialise class files
-        p = Path(config['working_directory']) / f'class_{ci}_probability.h5'
-        s = (D, R_c)
-        if (not p.is_file()
-            or h5py.File(str(p))['probability_matrix'].shape != s):
-            with h5py.File(str(p), 'w') as f:
-                f.create_dataset('probability_matrix', shape=s, dtype=float)
-                f['beta'] = beta
+        # initialise probability files
+        if c['update_probability']:
+            with h5py.File(c['probability_matrix_file'], 'w') as f:
+                f.create_dataset('P_dr', shape=(D, R), dtype=float)
 
-    prob = Probability(D, R, beta, class_r, P_thresh)
+    # calculate all probabilities (normalise logR)
+    prob = Probability(D, np.sum(Rs), beta, class_r, P_thresh)
     P_dr = prob.calculate(logR_dr, 0, D)
-    prob.save_class(config['working_directory'], update_probability_c, 0, D)
+
+    # save in class files
+    fnams = [c['probability_matrix_file'] for c in config['classes']]
+    prob.save_P_dr(fnams, update_probability_c, 0, D)
+
+    # save extra data in iteration file
     prob.save_iteration(config['working_directory'])
 
     config['most_likely_model_d'] = prob.class_max_d
-
-    for ci, c in enumerate(config['classes']):
-        c['P_dr'] = P_dr[:, c['r_offset']: c['r_offset'] + Rs[ci]]

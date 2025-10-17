@@ -83,6 +83,61 @@ from .tomograms import Tomograms, Tomograms_cl
 from .mapper import Mapper_cl
 from .dot import AdotB
 
+import pyopencl as cl
+import pyopencl.array as cl_array
+import pyclblast
+
+import warnings, os
+# warnings.filterwarnings("ignore", category=cl.CompilerWarning)
+os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
+
+
+def gpu_dot(A, B, queue, a_transp=False, b_transp=False):
+    if a_transp:
+        k, m = A.shape
+        a_ld = m
+    else:
+        m, k = A.shape
+        a_ld = k
+
+    if b_transp:
+        n = B.shape[0]
+        b_ld = k
+    else:
+        n = B.shape[1]
+        b_ld = n
+
+    c_ld = n
+
+    assert(A.flags.c_contiguous)
+    assert(B.flags.c_contiguous)
+
+    assert(np.issubdtype(A.dtype, np.float32))
+    assert(np.issubdtype(B.dtype, np.float32))
+
+    C = np.zeros((m, n), dtype=np.float32)
+    A_dev = cl_array.to_device(queue, A)      # cl_array.Array; has .dtype
+    B_dev = cl_array.to_device(queue, B)
+    C_dev = cl_array.to_device(queue, C)      # or cl_array.empty(queue, (m,n), dtype=np.float32)
+
+    # Call pyclblast.gemm using your version's signature:
+    # gemm(queue, m, n, k, a, b, c, a_ld, b_ld, c_ld, ...)
+    evt = pyclblast.gemm(
+        queue,
+        m, n, k, # (m, n) = (m, k) . (k, n)
+        A_dev, B_dev, C_dev,
+        a_ld, b_ld, c_ld, # a_ld = k, b_ld = n, c_ld = n (row-major)
+        alpha=1.0,
+        beta=0.0,
+        a_transp=a_transp,
+        b_transp=b_transp
+    )
+
+    # evt.wait()
+    # C_res = C_dev.get()
+    return C_dev, evt
+
+
 
 class Update_model_class():
     """
@@ -94,7 +149,7 @@ class Update_model_class():
     7. apply symmetry
     """
 
-    def __init__(self, w_d, c):
+    def __init__(self, w_d, c, cl=None):
         self.wsums_r = c['wsums_r']
         self.w_d = w_d
         self.C_i = c['data'].C_i
@@ -124,13 +179,16 @@ class Update_model_class():
         # set up dot product calculation N_ri = sum_d P_dr K_di
         # N_ri = np.dot(P_dr.T, c['data'][:])
         # N_ri = np.dot(P_dr.T, c['data'][:])
-        self.PdotK = AdotB(self.P_dr.T, self.K_di)
-
-        self.r_chunk_size = self.PdotK.M_chunksize
+        # self.PdotK = AdotB(self.P_dr.T, self.K_di)
+        # self.r_chunk_size = self.PdotK.M_chunksize
         self.R = self.P_dr.shape[1]
+        self.r_chunk_size = self.R
 
         # prepare mapping operations
-        cl = utils_cl.opencl_init()
+        if cl is None:
+            cl = utils_cl.opencl_init()
+
+        self.queue = cl['queue']
 
         self.mapper_cl = Mapper_cl(
                 c['mapper'],
@@ -147,7 +205,15 @@ class Update_model_class():
         # 3. calculate P . K
         # ------------------
         t0 = time()
-        self.N_ri = self.PdotK()
+        # self.N_ri = self.PdotK()
+
+        N_ri_dev, evt = gpu_dot(
+            self.P_dr.astype(np.float32),
+            self.K_di[:].astype(np.float32),
+            self.queue, a_transp=True, b_transp=False)
+        evt.wait()
+        self.N_ri = N_ri_dev.get()
+        # assert(np.allclose(N_ri, self.N_ri))
         print(f'P dot K time:', time() - t0)
         # return self.N_ri
 
@@ -239,7 +305,7 @@ class Update_model_class():
 
 def update_model_basic(config):
     """
-    cpu all in memory update
+    cpu all in memory update (in place operation on config)
 
     1. calculate wsums_r (if needed)
     2. calculate w_d     (if needed)
@@ -270,6 +336,7 @@ def update_model_basic(config):
         I = mupdate.calculate()
 
         c['model'].data = I
+
     print(f'update time:', time() - t0)
 
 
@@ -316,11 +383,12 @@ def calculate_wsums_cl(
         mapper=None,
         model=None,
         data=None,
+        cl=None,
         **kwargs
         ):
 
-    cl = utils_cl.opencl_init()
-
+    if cl is None:
+        cl = utils_cl.opencl_init()
 
     if not (likelihood == 'Poisson' and frame_model == 'basic'):
         tomos = Tomograms(
@@ -336,3 +404,141 @@ def calculate_wsums_cl(
         wsums_r = None
 
     return wsums_r
+
+
+def update_model_subprocess(config_file, config, p_per_device=2):
+    """
+    calculate tomogram sums and fluence in this process (might par. later)
+    then farm off model update to subprocesses
+    """
+    import subprocess, sys
+    from . import utils_cl, utils
+
+    cl = utils_cl.opencl_init()
+
+    # calculate tomogram sums if needed
+    # ---------------------------------
+    t0 = time()
+    for c in config['classes']:
+        # load model
+        if c['model'].data is None:
+            with h5py.File(c['model_file']) as f:
+                c['model'].data = f['data'][()]
+
+        c['mapper'].load_coords(c['data'].mask)
+        c['wsums_r'] = calculate_wsums_cl(**c, cl=cl)
+
+        # write to file
+        with h5py.File(c['wsums_file'], 'w') as f:
+            f['wsums_r'] = c['wsums_r']
+
+    print(f'tomo time:', time() - t0)
+
+    # calculate fluence if needed
+    # ---------------------------
+    t0 = time()
+    # load probability matrix
+    for c in config['classes']:
+        fnam = c['probability_matrix_file']
+        with h5py.File(fnam) as f:
+            c['P_dr'] = f['P_dr'][()]
+
+    w_d = calculate_fluence(config)
+
+    # write to file
+    with h5py.File(config['fluence_file'], 'w') as f:
+        f['w_d'] = w_d
+    print(f'fluence time:', time() - t0)
+
+    # delete P_dr to save space
+    for c in config['classes']:
+        del c['P_dr']
+        c['P_dr'] = None
+
+    # class ids
+    cids = [i for i in range(len(config['classes'])) if config['classes'][i]['update_model']]
+
+    devices = utils_cl.get_devices(device_type='gpu')
+
+    # number parallel processes
+    nproc = p_per_device * len(devices)
+
+    # make cids_str = '0,1,2 3,4,5 6,7,8 9'
+    cids_str = []
+    for s in np.array_split(cids, nproc):
+        cids_str.append(','.join(s.astype(str)))
+    cids_str = ' '.join(cids_str)
+
+    cmd = f"time parallel --halt now,fail=1 python -m emc3.update_models {config_file} {{}} {{%}} ::: {cids_str}"
+    print(cmd)
+    p = subprocess.Popen(
+        cmd,
+        text=True,
+        shell=True,
+        stdout=sys.stdout,
+        stderr=sys.stderr
+        )
+    p.wait()
+
+    if p.returncode != 0:
+        raise ValueError('something went wrong with call')
+
+    return p
+
+
+"""
+load config
+calculate logR for selected classes
+    this helps to reduce io and initialisation overhead
+write to file
+
+use platform and device specified on command line for multi gpu
+"""
+if __name__ == '__main__':
+    import sys, pickle, h5py
+
+    config_fnam = sys.argv[1]
+    class_ids = [int(c) for c in sys.argv[2].split(',')]
+    device = int(sys.argv[3])
+
+    config = pickle.load(open(config_fnam, 'rb'))
+    wd = config['working_directory']
+
+    # load fluence
+    with h5py.File(config['fluence_file']) as f:
+        w_d = f['w_d'][()]
+
+    cl = utils_cl.opencl_init(device_no=device)
+
+    for class_id in class_ids:
+        c = config['classes'][class_id]
+
+        if not c['update_logR']:
+            sys.exit()
+
+        # load data
+        c['data'].load_from_file()
+
+        # load prob
+        with h5py.File(c['probability_matrix_file']) as f:
+            c['P_dr'] = f['P_dr'][()]
+
+        # load wsums
+        with h5py.File(c['wsums_file']) as f:
+            c['wsums_r'] = f['wsums_r'][()]
+
+        c['mapper'].load_coords(c['data'].mask)
+
+        t0 = time()
+        mupdate = Update_model_class(w_d, c, cl)
+
+        I = mupdate.calculate()
+
+        c['model'].data = I
+        print(f'update time:', time() - t0)
+
+        # save
+        with h5py.File(c['model_file'], 'w') as f:
+            f['data'] = c['model'].data
+            f['dq'] = c['model'].dq
+

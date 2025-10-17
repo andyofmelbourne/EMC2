@@ -7,7 +7,7 @@ from . import probability
 from . import update_models
 
 from .detector import Detector_cxi
-from .model import Model, Model_from_file
+from .model import Model
 from .mask import make_mask
 from .data import DataCXI, DataSparseCXI
 from .mapper import Mapper

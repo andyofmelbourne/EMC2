@@ -198,7 +198,7 @@ def make_2D_image(arrays_i):
                 positions_i.append((x, y))
 
     # must be equal for now
-    N_i = N * np.ones((N,), dtype=int)
+    N_i = N * np.ones((len(arrays_i),), dtype=int)
 
     return im, positions_i, N_i
 

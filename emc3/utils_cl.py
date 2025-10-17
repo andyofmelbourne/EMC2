@@ -6,61 +6,68 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
-def opencl_init(device_no=0):
+def get_devices(
+        device_type='gpu',
+        fallback=True,
+        preferred_platform_gpu='nvidia',
+        preferred_platform_cpu='intel'
+        ):
     logger.debug('loading opencl context (gpu prefered)')
+
+    if device_type.lower()=='gpu':
+        device_type = cl.device_type.GPU
+        preferred_platform = preferred_platform_gpu.lower()
+    elif device_type.lower()=='cpu':
+        device_type = cl.device_type.CPU
+        preferred_platform = preferred_platform_cpu.lower()
+    else:
+        device_type = cl.device_type.ALL
+
     # find an opencl device (preferably a GPU)
     # in one of the available platforms
     done = False
     for p in cl.get_platforms():
-        devices = p.get_devices(cl.device_type.GPU)
-        if (len(devices) > 0) and ('NVIDIA' in p.name):
+        devices = p.get_devices(device_type)
+        if (len(devices) > 0) and (preferred_platform in p.name.lower()):
             done = True
             break
 
     if not done:
         for p in cl.get_platforms():
-            devices = p.get_devices(cl.device_type.GPU)
+            devices = p.get_devices(device_type)
             if (len(devices) > 0):
+                done = True
                 break
 
-    if len(devices) == 0:
+    if not done and fallback:
         for p in cl.get_platforms():
             devices = p.get_devices()
             if len(devices) > 0:
                 break
 
+    if len(devices) == 0:
+        raise ValueError('could not any devices')
+
     logger.debug(f'number of devices: {len(devices)}')
     logger.debug(f'devices: {devices}')
 
+    return devices
+
+def opencl_init(device_no=0):
+    devices = get_devices(device_type='gpu')
     device = devices[device_no % len(devices)]
 
     context = cl.Context([device])
 
-    # one queue for each device (maybe make 2 per device later)
     queue = cl.CommandQueue(context, device)
-    # for testing
-    # queues  = queues + \
-    #       [cl.CommandQueue(context, device) for device in devices]
     return {'context': context, 'queue': queue, 'device': device}
 
 
 def opencl_init_cpu(rank=0):
     """find an opencl device if available"""
-    logger.debug('loading opencl context (cpu only)')
-    for p in cl.get_platforms():
-        devices = p.get_devices(cl.device_type.CPU)
-        if (len(devices) > 0):
-            break
-
-    logger.debug(f'number of devices: {len(devices)}')
-    logger.debug(f'devices: {devices}')
+    devices = get_devices(device_type='cpu')
 
     context = cl.Context(devices)
-    # queue   = cl.CommandQueue(
-    #    context,
-    #    properties = cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE
-    # )
     queue = cl.CommandQueue(context)
     return {'context': context, 'queue': queue}
 

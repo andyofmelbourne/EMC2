@@ -4,9 +4,7 @@ default_class = {
     'cxi_file': None,
     'class_id': None,
     'P_data': 0,
-    'K_data': 0,
     'model': None,
-    'relative_fluence': None,
     'mapper': None,
     'interpolation_forward': 'linear',
     'likelihood': 'Poisson_fluence_free',
@@ -20,12 +18,12 @@ default_class = {
     'update_model': True,
     'polarisation': 'x',
     'r_offset': 0,
-    'probability_matrix': None,
+    'P_dr': None,
     'probability_matrix_file': None,
-    'wsums': None,
-    'P_wsums': None,
-    'P_ksums': None,
-    'ksums': None,
+    'logR_file': None,
+    'model_file': None,
+    'P_wsums_file': None,
+    'wsums_file': None,
 }
 
 
@@ -39,6 +37,12 @@ def make_config(config):
     if not wd.is_dir():
         raise ValueError('must set working_directory in config')
 
+    # point to same file for now
+    k = 'fluence_file'
+    if k not in config or config[k] is None:
+        fnam = wd / f"fluence.h5"
+        config[k] = fnam
+
     for i, c in enumerate(config['classes']):
         d = dict(default_class)
         d.update(c)
@@ -50,8 +54,24 @@ def make_config(config):
         r_offset += d['mapper'].shape[1]
 
         if d['probability_matrix_file'] is None:
-            fnam = wd / f"probability_matrix_{d['class_id']}.h5"
+            fnam = wd / f"class_probability_matrix_{d['class_id']}.h5"
             d['probability_matrix_file'] = fnam
+
+        if d['model_file'] is None:
+            fnam = wd / f"class_model_{d['class_id']}.h5"
+            d['model_file'] = fnam
+
+        if d['logR_file'] is None:
+            fnam = wd / f"class_logR_{d['class_id']}.h5"
+            d['logR_file'] = fnam
+
+        if d['P_wsums_file'] is None:
+            fnam = wd / f"class_P_wsums_{d['class_id']}.h5"
+            d['P_wsums_file'] = fnam
+
+        if d['wsums_file'] is None:
+            fnam = wd / f"class_wsums_{d['class_id']}.h5"
+            d['wsums_file'] = fnam
 
         classes.append(d)
 
