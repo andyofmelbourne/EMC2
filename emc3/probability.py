@@ -141,7 +141,10 @@ class Probability():
         occupancy_dc = np.zeros((D, self.models), dtype=float)
         Q_d = np.zeros(D, dtype=float)
 
+        # d_chunk_size = max(1, int(os.cpu_count()/2))
         d_chunk_size = max(1, int(os.cpu_count()/2))
+        d_chunk_size = min(d_chunk_size, D)
+
         d_iter = tqdm(
             chunker(d_chunk_size, D),
             desc='calculating P_dr from logR',
@@ -197,7 +200,8 @@ class Probability():
             if update_probability_c[c]:
                 with h5py.File(fnam, 'r+') as f:
                     f['P_dr'][d0:d1, :] = self.P_dr[:d1-d0, r0:r1]
-                    f['beta'] = self.beta
+                    if 'beta' not in f:
+                        f['beta'] = self.beta
             else:
                 logger.info('update_probability is False '
                             f'skipping update for class {c}')
@@ -248,13 +252,22 @@ def calculate_P(config, beta):
             with h5py.File(c['probability_matrix_file'], 'w') as f:
                 f.create_dataset('P_dr', shape=(D, R), dtype=float)
 
+    fnams = [c['probability_matrix_file'] for c in config['classes']]
+
     # calculate all probabilities (normalise logR)
     prob = Probability(D, np.sum(Rs), beta, class_r, P_thresh)
-    P_dr = prob.calculate(logR_dr, 0, D)
 
-    # save in class files
-    fnams = [c['probability_matrix_file'] for c in config['classes']]
-    prob.save_P_dr(fnams, update_probability_c, 0, D)
+    # calculate frame chunksize ~2G
+    D, R = logR_dr.shape
+    mem = 2 * 1024**3
+    d_chunk_size = max(1, int(mem / (8 * R)))
+    d_chunk_size = min(d_chunk_size, D)
+
+    for d0, d1, dd in chunker(d_chunk_size, D):
+        P_dr = prob.calculate(logR_dr[d0:d1], d0, d1)
+
+        # save in class files
+        prob.save_P_dr(fnams, update_probability_c, d0, d1)
 
     # save extra data in iteration file
     prob.save_iteration(config['working_directory'])

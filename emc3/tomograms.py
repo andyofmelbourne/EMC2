@@ -36,7 +36,7 @@ class Tomograms():
 
         return out * self.C_i
 
-    def calculate_wsums(self, chunksize=2048):
+    def calculate_wsums(self, chunksize=1024):
         chunksize = min(chunksize, self.shape[0])
 
         W_ri = np.empty((chunksize, self.shape[1]), dtype=np.float32)
@@ -72,7 +72,7 @@ class Tomograms_cl():
             int R = get_global_size(1);
             int I = get_global_size(0);
 
-            int base = 4 * r + r_offset;
+            int base = 4 * (r + r_offset);
 
             float4 v = r_i[i];
 
@@ -100,7 +100,7 @@ class Tomograms_cl():
         if dim == 2:
             n = '(float2)(r0, r1)'
         elif dim == 3:
-            n = '(float4)(r0, r1, r2, 0f)'
+            n = '(float4)(r0, r1, r2, (float)0.0)'
 
         self.code = cl.Program(
             context,
@@ -149,7 +149,7 @@ class Tomograms_cl():
         if W_cl is None:
             W_cl = self.W_cl
 
-        self.event = code.tomo(
+        self.event = cl.Kernel(code, 'tomo')(
             self.queue,
             (self.tomo.shape[1], r1-r0),
             None,
@@ -164,22 +164,27 @@ class Tomograms_cl():
 
         if cpu:
             cl.enqueue_copy(self.queue, self.W_ri, self.W_cl)
-            out = self.W_ri
+            out = self.W_ri[:r1-r0]
         else:
             out = self.W_cl
 
         return out
 
-    def calculate_wsums(self, chunksize=2048):
-        chunksize = min(chunksize, self.shape[0])
+    def calculate_wsums(self, chunksize=1024, r0=0, r1=None):
+        if r1 is None:
+            r1 = self.shape[0]
+
+        R = r1-r0
+
+        chunksize = min(chunksize, R)
 
         self.load_buffers(chunksize)
 
         wsums_r = np.empty(self.shape[0], dtype=np.float32)
 
-        for r0, r1, dr in chunker(chunksize, self.shape[0]):
-            W_ri = self.calculate_tomogram(r0, r1, cpu=True)
+        for r00, r11, dr in chunker(chunksize, R):
+            W_ri = self.calculate_tomogram(r0+r00, r0+r11, cpu=True)
 
-            wsums_r[r0:r1] = np.sum(W_ri[:dr], axis=1)
+            wsums_r[r0+r00:r0+r11] = np.sum(W_ri[:dr], axis=1)
         return wsums_r
 

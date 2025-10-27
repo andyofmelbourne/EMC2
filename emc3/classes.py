@@ -16,6 +16,7 @@ default_class = {
     'update_logR': True,
     'update_probability': True,
     'update_model': True,
+    'filter_model': None,
     'polarisation': 'x',
     'r_offset': 0,
     'P_dr': None,

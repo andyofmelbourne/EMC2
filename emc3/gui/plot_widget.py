@@ -286,6 +286,9 @@ class PlotItem(pg.PlotItem):
         self.link_menu = QMenu("Link X-axis to other plots", self.menu)
         self.menu.addMenu(self.link_menu)
 
+        self.map_menu = QMenu("Link values to X-axis of other plots", self.menu)
+        self.menu.addMenu(self.map_menu)
+
         sort = QAction("sort (ascending)", self.menu)
         sort.triggered.connect(self.parent.sort)
         self.menu.addAction(sort)
@@ -307,6 +310,14 @@ class PlotItem(pg.PlotItem):
 
             my_pw = self.parent
             pw = other.current_plot
+
+            # X map
+            title = pw.title
+            act_xmap = QAction(f"Link values to {title}", self.map_menu)
+            # act_x.triggered.connect(lambda _, o=plot_item: self.setXLink(o))
+            act_xmap.triggered.connect(lambda _, o=pw: my_pw.setXMap(o))
+            self.map_menu.addAction(act_xmap)
+
 
             shape = my_pw.xmap.shape
             other_shape = pw.xmap.shape
@@ -365,6 +376,7 @@ class PlotWidgetBase(QWidget):
 
         self.linked_axis = None
         self.vline = None
+        self.current_slice = 0
 
     def toggle_aspect(self):
         self.lock_aspect = not self.lock_aspect
@@ -398,6 +410,18 @@ class PlotWidgetBase(QWidget):
         if other.linked_axis is not self.linked_axis:
             other.setXLink(self, self.linked_axis)
 
+    def setXMap(self, other):
+        """
+        Use my values to xmap the other plot
+
+        show: other_plot[my_values][:]
+        """
+        i = self.data[()][self.xmap]
+        if i.max() < other.data.shape[0]:
+            other.update_xmap(i)
+        else:
+            print('Error: cannot use map on other data')
+
     def add_vline(self):
         vline = pg.InfiniteLine(
                 pos=0,
@@ -421,7 +445,11 @@ class PlotWidgetBase(QWidget):
             self.update_xmap(xmap)
 
     def update_xmap(self, xmap):
-        self.xmap[:] = xmap
+        self.xmap = xmap
+        if self.vline is not None:
+            self.vline.setBounds([0, len(xmap)-1])
+
+        self.current_slice = xmap[self.current_slice]
         self.plot()
 
     def close(self):
@@ -536,13 +564,13 @@ class PlotWidget3D(PlotWidget2D):
         l2.addWidget(self.slice_label)
 
         # Slider to select slice
-        self.slider = InfiniteSlider(Qt.Horizontal)
-        self.slider.setMinimum(0)
-        self.slider.setMaximum(self.data.shape[0]-1)
-        self.slider.valueChanged.connect(self._on_slider_change)
-        self.slider.setValue(0)
+        self.vline = InfiniteSlider(Qt.Horizontal)
+        self.vline.setMinimum(0)
+        self.vline.setMaximum(self.data.shape[0]-1)
+        self.vline.valueChanged.connect(self._on_slider_change)
+        self.vline.setValue(0)
         self.current_slice = 0
-        l2.addWidget(self.slider)
+        l2.addWidget(self.vline)
 
         self.layout().addLayout(l2)
 
@@ -553,7 +581,8 @@ class PlotWidget3D(PlotWidget2D):
         self.plot()
 
     def add_vline(self):
-        self.vline = self.slider
+        # self.vline = self.slider
+        pass
 
     def sort(self, inverse=False):
         pass

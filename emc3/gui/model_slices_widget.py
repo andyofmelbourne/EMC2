@@ -77,11 +77,26 @@ class ImageView(pg.ImageView):
         elif key == 'Left':
             self.update_plots(last=True)
 
-    def update_plots(self, next=False, last=False, key=False):
+        elif key == 'S':
+            self.saveLabels(self.selected_labels)
+
+        elif key == 'F':
+            self.showFrames(self.selected_labels)
+
+    def saveLabels(self, labels):
+        print('selected labels:', labels)
+
+    def showFrames(self, labels):
+        print('selected labels:', labels)
+
+    def update_plots(self, current=False, next=False, last=False, key=False):
         if self.updating:
             return
 
         self.updating = True
+
+        if current:
+            title, (arrays_i, labels_i, info_i) = self.array_getter._increment(inc=0)
 
         if next:
             title, (arrays_i, labels_i, info_i) = self.array_getter.next()
@@ -267,7 +282,13 @@ class BaseIterationInfo_getter(QObject):
         self.iterationChanged.emit(gkey)
         return d
 
-    def _get_data(self, gkey):
+    def _get_data(self, gkey=None, keys=None):
+        if gkey is None:
+            gkey = self.iteration
+
+        if keys is None:
+            keys = self.keys
+
         data = [gkey,]
 
         with h5py.File(self.fnam) as f:
@@ -276,7 +297,7 @@ class BaseIterationInfo_getter(QObject):
             else:
                 g = f[gkey]
 
-            for key in self.keys:
+            for key in keys:
                 data.append(self._get_from_h5(g, key))
         return data
 
@@ -342,6 +363,8 @@ class SliceGetter(QObject):
 
 
 class Model_slice_widget(ImageView):
+    showFramesSignal = pyqtSignal(object)
+
     def __init__(self, directory, parent=None):
         fnam = Path(directory) / 'iteration_info.h5'
 
@@ -352,6 +375,47 @@ class Model_slice_widget(ImageView):
         self.iterationChanged = self.slice_getter.iterationChanged
 
         super().__init__(self.slice_getter, view=pg.PlotItem())
+
+        self.class_labels_key = 'class_labels' # class labels for full dataset
+        self.class_labels_file = 'selected_classes.h5' # class labels for full dataset
+
+        # load previously saved selection
+        if Path(self.class_labels_file).is_file():
+            with h5py.File(self.class_labels_file) as f:
+                self.selected_labels = f['selected_classes'][()]
+                self.update_plots(current=True)
+
+
+    def get_frames(self, labels):
+        gkey, class_labels = self.slice_getter.itget._get_data(
+            keys=[self.class_labels_key,]
+        )
+
+        selected_frames_full = []
+        for c in labels:
+            selected_frames_full.append(np.where(class_labels==c)[0])
+
+        selected_frames_full = np.concatenate(selected_frames_full)
+
+        print(selected_frames_full)
+        print(labels)
+        print('number of frames selected:', len(selected_frames_full))
+        print('saving selection to:', self.class_labels_file)
+        return gkey, selected_frames_full
+
+    def showFrames(self, labels):
+        gkey, selected_frames_full = self.get_frames(labels)
+
+        self.showFramesSignal.emit(selected_frames_full)
+
+    def saveLabels(self, labels):
+        gkey, selected_frames_full = self.get_frames(labels)
+
+        with h5py.File(self.class_labels_file, 'w') as f:
+            f['selected_classes'] = np.array(labels)
+            f['selected_frames'] = selected_frames_full
+            f['source_file'] = str(self.fnam)
+            f['source_key'] = str(gkey)
 
 
 if __name__ == '__main__':

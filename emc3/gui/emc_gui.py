@@ -34,6 +34,8 @@ def main(directory):
 
     signal.signal(signal.SIGINT, signal.SIG_DFL) # allow Control-C
     pg.setConfigOption('background', pg.mkColor(0.1))
+    pg.setConfigOptions(antialias=True)
+    pg.setConfigOptions(imageAxisOrder='row-major')
 
     win = MainWindow()
     win.populate_from_dict(gui_structure)

@@ -47,6 +47,21 @@ class Model():
     def init_random(self):
         self.data = np.random.random(self.shape)
 
+    def init_blob(self):
+        N = self.shape[0]
+        I = blob(N, self.dq)
+        I *= (np.random.random(I.shape) + 0.1)
+        self.data = I
+
+def blob(N, dq):
+    sigma_z = 8 * 5.58661e+06
+    sigma_x = 4 * 5.58661e+06
+    i = dq * np.fft.fftshift(np.fft.fftfreq(N, 1/N))
+    x = i[:, None, None]
+    y = i[None, :, None]
+    z = i[None, None, :]
+    I = np.exp(-(x**2 + y**2)/(2*sigma_x**2) - z**2/(2*sigma_z**2))
+    return I
 
 def update_I_class(c):
     P_dr = c['P_dr']

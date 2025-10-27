@@ -11,6 +11,14 @@ def make_mask(det, model, xyz_offset=[[0, 0, 0]], scale=1, padding=[0, 0]):
 
     qmax = min((qmax_model-offset_q)/scale)
 
+    model_q = scale R . (pixel_q - offset_q)
+
+    so the biggest model_q value will be:
+        model_q = scale_max (pixel_q_max + |offset_q|)
+
+    so pixel_q_max should be no bigger than:
+        pixel_q_max = model_q / scale_max - |offset_q|
+
     we also offset limits for likelihood calculations
     """
     # find maximum offset in q-units
@@ -18,7 +26,7 @@ def make_mask(det, model, xyz_offset=[[0, 0, 0]], scale=1, padding=[0, 0]):
     imax = np.max(np.sum(o[:, :2]**2, axis=1)**0.5 / det.pixel_size)
     qmax_offset = imax * det.dq
     scale_max = np.max(scale)
-    qmax = (model.qmax - qmax_offset) / scale_max
+    qmax = model.qmax / scale_max - qmax_offset
     qmax -= model.dq  # safety margin
     qmin = det.qmin
 

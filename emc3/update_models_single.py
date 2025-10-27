@@ -75,6 +75,7 @@ import numpy as np
 import h5py
 from tqdm import tqdm
 from time import time
+from pathlib import Path
 
 from . import symmetry
 from . import utils
@@ -83,6 +84,8 @@ from .tomograms import Tomograms, Tomograms_cl
 from .mapper import Mapper_cl
 from .dot import AdotB
 
+from .update_models import *
+
 import pyopencl as cl
 import pyopencl.array as cl_array
 import pyclblast
@@ -90,53 +93,6 @@ import pyclblast
 import warnings, os
 # warnings.filterwarnings("ignore", category=cl.CompilerWarning)
 os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
-
-
-def gpu_dot(A, B, queue, a_transp=False, b_transp=False):
-    if a_transp:
-        k, m = A.shape
-        a_ld = m
-    else:
-        m, k = A.shape
-        a_ld = k
-
-    if b_transp:
-        n = B.shape[0]
-        b_ld = k
-    else:
-        n = B.shape[1]
-        b_ld = n
-
-    c_ld = n
-
-    assert(A.flags.c_contiguous)
-    assert(B.flags.c_contiguous)
-
-    assert(np.issubdtype(A.dtype, np.float32))
-    assert(np.issubdtype(B.dtype, np.float32))
-
-    C = np.zeros((m, n), dtype=np.float32)
-    A_dev = cl_array.to_device(queue, A)      # cl_array.Array; has .dtype
-    B_dev = cl_array.to_device(queue, B)
-    C_dev = cl_array.to_device(queue, C)      # or cl_array.empty(queue, (m,n), dtype=np.float32)
-
-    # Call pyclblast.gemm using your version's signature:
-    # gemm(queue, m, n, k, a, b, c, a_ld, b_ld, c_ld, ...)
-    evt = pyclblast.gemm(
-        queue,
-        m, n, k, # (m, n) = (m, k) . (k, n)
-        A_dev, B_dev, C_dev,
-        a_ld, b_ld, c_ld, # a_ld = k, b_ld = n, c_ld = n (row-major)
-        alpha=1.0,
-        beta=0.0,
-        a_transp=a_transp,
-        b_transp=b_transp
-    )
-
-    # evt.wait()
-    # C_res = C_dev.get()
-    return C_dev, evt
-
 
 
 class Update_model_class():
@@ -149,15 +105,34 @@ class Update_model_class():
     7. apply symmetry
     """
 
-    def __init__(self, w_d, c, cl=None, r_chunk_size=1024, d_chunk_size=1024):
-        self.wsums_r = c['wsums_r']
+    def __init__(self, w_d, c, cl=None,
+            r_chunk_size=1024, d_chunk_size=1024,
+            r0=None, r1=None):
+
+        self.R = c['wsums_r'].shape[0]
+        self.R0 = self.R
+
+        if r0 is None:
+            r0 = 0
+
+        if r1 is None:
+            r1 = self.R
+
+        r1 = min(self.R, r1)
+        r0 = max(0, r0)
+        self.r0 = r0
+        self.r1 = r1
+        self.R = r1 - r0
+
+        self.wsums_r = c['wsums_r'][r0: r1]
         self.w_d = w_d
         self.C_i = c['data'].C_i
-        self.P_dr = c['P_dr']
+        self.P_dr = c['P_dr'].astype(np.float32)
         self.K_d = c['data'].data_sum
         self.K_di = c['data']
         self.maximise = c['maximise']
         self.model = c['model']
+        self.class_id = c['class_id']
         self.filter = c.get('filter_model', None)
 
         # determine offset calculation
@@ -182,29 +157,33 @@ class Update_model_class():
         # N_ri = np.dot(P_dr.T, c['data'][:])
         # self.PdotK = AdotB(self.P_dr.T, self.K_di)
         # self.r_chunk_size = self.PdotK.M_chunksize
-        self.R = self.P_dr.shape[1]
         self.D = self.K_di.shape[0]
         self.I = self.K_di.shape[1]
         self.r_chunk_size = min(r_chunk_size, self.R)
         self.d_chunk_size = min(d_chunk_size, self.D)
 
-        # prepare mapping operations
-        if cl is None:
-            cl = utils_cl.opencl_init()
+        self.cl = cl
+        self.mapper = c['mapper']
 
-        self.queue = cl['queue']
+    def calculate(self, Pmin=1e-5):
+        """
+        ignore slices (r's) with no frames above Pmin
+        """
+        # prepare mapping operations
+        if self.cl is None:
+            self.cl = utils_cl.opencl_init()
+
+        self.queue = self.cl['queue']
 
         self.mapper_cl = Mapper_cl(
-                c['mapper'],
-                cl['context'],
-                cl['queue'])
+                self.mapper,
+                self.cl['context'],
+                self.cl['queue'])
 
         self.mapper_cl.load_buffers(
                 r_chunk_size=self.r_chunk_size,
                 ravel=True)
 
-
-    def calculate(self):
         N_n = np.zeros(self.model.size, dtype=float)
         D_n = np.zeros(self.model.size, dtype=float)
         mtime = 0.
@@ -248,7 +227,7 @@ class Update_model_class():
             for s in range(self.mapper_cl.shape[0]):
                 t0 = time()
                 n_sri = self.mapper_cl.calculate_mapping(
-                        s, r0, r1, ravel=True, cpu=True)
+                            s, r0+self.r0, r1+self.r0, ravel=True, cpu=True)
                 mtime += time() - t0
 
                 t0 = time()
@@ -269,6 +248,27 @@ class Update_model_class():
 
             # print(f'mapping time:', mtime)
             # print(f'bincount time:', btime)
+
+        # save chunk
+        fnam = f'class_model_chunk_{self.class_id}_{self.r0}_{self.r1}.h5'
+        with h5py.File(fnam, 'w') as f:
+            f['N_n'] = N_n
+            f['D_n'] = D_n
+
+    def finish(self):
+        # load chunks
+        fnams = Path('./').glob(f'class_model_chunk_{self.class_id}_*.h5')
+
+        N_n = np.zeros(self.model.size, dtype=float)
+        D_n = np.zeros(self.model.size, dtype=float)
+
+        for fnam in fnams:
+            with h5py.File(str(fnam)) as f:
+                N_n += f['N_n'][()]
+                D_n += f['D_n'][()]
+
+            # delete
+            fnam.unlink()
 
         sym = symmetry.Symmetry(
                 self.model.i0,
@@ -352,109 +352,6 @@ class Update_model_class():
 
 
 
-def update_model_basic(config):
-    """
-    cpu all in memory update (in place operation on config)
-
-    1. calculate wsums_r (if needed)
-    2. calculate w_d     (if needed)
-
-    chunked:
-    3. calculate D_ri
-    4. calculate P . K
-    5. calculate voxel mapping n_sri
-    6. merge N and D (in tomos or model space)
-    7. apply symmetry
-    """
-    t0 = time()
-    for c in config['classes']:
-        # calculate tomogram sums if needed
-        c['mapper'].load_coords(c['data'].mask)
-        c['wsums_r'] = calculate_wsums_cl(**c)
-    print(f'tomo time:', time() - t0)
-
-    # calculate fluence if needed
-    t0 = time()
-    w_d = calculate_fluence(config)
-    print(f'fluence time:', time() - t0)
-
-    t0 = time()
-    for c in config['classes']:
-        mupdate = Update_model_class(w_d, c)
-
-        I = mupdate.calculate()
-
-        c['model'].data = I
-
-    print(f'update time:', time() - t0)
-
-
-def calculate_fluence(config):
-    D = config['classes'][0]['data'].shape[0]
-    K_d = config['classes'][0]['data'].data_sum
-
-    w_d = np.zeros((D,), dtype=float)
-
-    for c in config['classes']:
-        w_d += np.dot(c['P_dr'], c['wsums_r'])
-
-    w_d = K_d / w_d
-    return w_d
-
-
-
-def calculate_wsums(
-        likelihood=None,
-        frame_model=None,
-        mapper=None,
-        model=None,
-        data=None,
-        **kwargs
-        ):
-
-    if not (likelihood == 'Poisson' and frame_model == 'basic'):
-        tomos = Tomograms(
-                mapper,
-                model,
-                data.C_i)
-
-        wsums_r = tomos.calculate_wsums()
-
-    else:
-        wsums_r = None
-
-    return wsums_r
-
-
-def calculate_wsums_cl(
-        likelihood=None,
-        frame_model=None,
-        mapper=None,
-        model=None,
-        data=None,
-        cl=None,
-        **kwargs
-        ):
-
-    if cl is None:
-        cl = utils_cl.opencl_init()
-
-    if not (likelihood == 'Poisson' and frame_model == 'basic'):
-        tomos = Tomograms(
-                mapper,
-                model,
-                data.C_i)
-
-        tomos_cl = Tomograms_cl(tomos, cl['context'], cl['queue'])
-
-        wsums_r = tomos_cl.calculate_wsums()
-
-    else:
-        wsums_r = None
-
-    return wsums_r
-
-
 def update_model_subprocess(config_file, config, p_per_device=2):
     """
     calculate tomogram sums and fluence in this process (might par. later)
@@ -504,21 +401,28 @@ def update_model_subprocess(config_file, config, p_per_device=2):
         del c['P_dr']
         c['P_dr'] = None
 
+    if not c['update_model']:
+        return None
+
     # class ids
     cids = [i for i in range(len(config['classes'])) if config['classes'][i]['update_model']]
+
+    assert(len(cids) == 1)
 
     devices = utils_cl.get_devices(device_type='gpu')
 
     # number parallel processes
     nproc = p_per_device * len(devices)
 
-    # make cids_str = '0,1,2 3,4,5 6,7,8 9'
-    cids_str = []
-    for s in np.array_split(cids, nproc):
-        cids_str.append(','.join(s.astype(str)))
-    cids_str = ' '.join(cids_str)
+    # split calculation by r-chunks
+    # str = '0-10000 10000-20000 20000-20323'
+    R = c['mapper'].shape[1]
+    r0_r1_str = []
+    for s in np.array_split(np.arange(0, R), nproc):
+        r0_r1_str.append('-'.join([str(s[0]), str(s[-1]+1)]))
+    r0_r1_str = ' '.join(r0_r1_str)
 
-    cmd = f"time parallel --halt now,fail=1 python -m emc3.update_models {config_file} {{}} {{%}} ::: {cids_str}"
+    cmd = f"time parallel --halt now,fail=1 python -m emc3.update_models_single {config_file} {{}} {{%}} ::: {r0_r1_str}"
     print(cmd)
     p = subprocess.Popen(
         cmd,
@@ -531,6 +435,39 @@ def update_model_subprocess(config_file, config, p_per_device=2):
 
     if p.returncode != 0:
         raise ValueError('something went wrong with call')
+
+    # now finish the job
+    c = config['classes'][0]
+
+    # load data
+    c['data'].load_from_file()
+
+    # load model
+    with h5py.File(c['model_file']) as f:
+        c['model'].data = f['data'][()]
+
+    # load prob
+    with h5py.File(c['probability_matrix_file']) as f:
+        c['P_dr'] = f['P_dr'][()]
+
+    # load wsums
+    with h5py.File(c['wsums_file']) as f:
+        c['wsums_r'] = f['wsums_r'][()]
+
+    c['mapper'].load_coords(c['data'].mask)
+
+    t0 = time()
+    mupdate = Update_model_class(w_d, c, cl)
+
+    I = mupdate.finish()
+
+    c['model'].data = I
+    print(f'update time:', time() - t0)
+
+    # save
+    with h5py.File(c['model_file'], 'w') as f:
+        f['data'] = c['model'].data
+        f['dq'] = c['model'].dq
 
     return p
 
@@ -547,7 +484,7 @@ if __name__ == '__main__':
     import sys, pickle, h5py
 
     config_fnam = sys.argv[1]
-    class_ids = [int(c) for c in sys.argv[2].split(',')]
+    r0, r1 = [int(c) for c in sys.argv[2].split('-')]
     device = int(sys.argv[3])
 
     config = pickle.load(open(config_fnam, 'rb'))
@@ -559,7 +496,7 @@ if __name__ == '__main__':
 
     cl = utils_cl.opencl_init(device_no=device)
 
-    for class_id in class_ids:
+    for class_id in [0,]:
         c = config['classes'][class_id]
 
         if not c['update_model']:
@@ -574,7 +511,7 @@ if __name__ == '__main__':
 
         # load prob
         with h5py.File(c['probability_matrix_file']) as f:
-            c['P_dr'] = f['P_dr'][()]
+            c['P_dr'] = f['P_dr'][:, r0:r1]
 
         # load wsums
         with h5py.File(c['wsums_file']) as f:
@@ -583,15 +520,9 @@ if __name__ == '__main__':
         c['mapper'].load_coords(c['data'].mask)
 
         t0 = time()
-        mupdate = Update_model_class(w_d, c, cl)
+        mupdate = Update_model_class(w_d, c, cl, r0=r0, r1=r1)
 
-        I = mupdate.calculate()
+        # calculate chunk
+        mupdate.calculate()
 
-        c['model'].data = I
         print(f'update time:', time() - t0)
-
-        # save
-        with h5py.File(c['model_file'], 'w') as f:
-            f['data'] = c['model'].data
-            f['dq'] = c['model'].dq
-

@@ -5,6 +5,9 @@ when clicked a dataset will open with a given geometry
 only datasets for which that geometry applies can be loaded from then on
 
 Load the mask maker in the plotWidget
+
+assumes:
+    pg.setConfigOptions(imageAxisOrder='row-major')
 """
 
 import h5py
@@ -257,9 +260,9 @@ class MaskMaker_plot_widget():
                 f[dataset] = self.mask
 
     def mask_ROI(self, roi):
-        sides   = [roi.size()[1], roi.size()[0]]
+        sides   = [roi.size()[0], roi.size()[1]]
 
-        n_ss_min, n_fs_min = roi.pos()
+        n_fs_min, n_ss_min = roi.pos()
         n_ss_max, n_fs_max = n_ss_min + sides[1], n_fs_min + sides[0]
 
         n_ss = self.n_i // self.image_shape[1]
@@ -320,7 +323,7 @@ class MaskMaker_plot_widget():
                 pos = event.scenePos()
                 mouse_point = img.mapFromScene(pos)
 
-                ss, fs = int(mouse_point.x()), int(mouse_point.y())
+                ss, fs = int(mouse_point.y()), int(mouse_point.x())
 
                 if ( 0 <= fs < self.mask_image.shape[1] and
                     0 <= ss < self.mask_image.shape[0]):

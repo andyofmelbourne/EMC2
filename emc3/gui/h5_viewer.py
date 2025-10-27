@@ -151,6 +151,7 @@ class H5_viewer(QWidget):
             self.vsplitter.addWidget(widget)
 
         widget.plot(data, name=name)
+        return widget
 
     def refresh(self):
         for plot in self.open_plots:

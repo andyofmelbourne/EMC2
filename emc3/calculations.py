@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from . import utils_cl
+from . import utils
 from .tomograms import Tomograms, Tomograms_cl
 from .likelihood import Likelihood
 from .update_models import gpu_dot
@@ -34,49 +35,58 @@ def calculate_logR_cl(config):
 
         L = Likelihood(tomos, c['P_data'], **c)
 
-        c['logR_dr'], t = calculate_logR_class_0(L, cl)
+        c['logR_dr'], wsums_r, t = calculate_logR_class_0(L, cl)
         dot_time += t
 
     print('K . W time:', dot_time)
 
 
-def calculate_logR_class_0(L, cl):
+def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
     """
     all in memory cpu + opencl process
     """
+    R = L.tomo.shape[0]
+    D = L.K_di.shape[0]
+
     tomos_cl = Tomograms_cl(L.tomo, cl['context'], cl['queue'])
 
+    r_chunk_size = min(r_chunk_size, R)
+
     t0 = time.time()
-    L.wsums_r = tomos_cl.calculate_wsums()
+    L.wsums_r = tomos_cl.calculate_wsums(chunksize=r_chunk_size)
 
-    R = L.tomo.shape[0]
-    tomos_cl.load_buffers(r_chunk_size=R)
+    tomos_cl.load_buffers(r_chunk_size=r_chunk_size)
 
-    # calculate tomograms
-    W_ri = tomos_cl.calculate_tomogram(0, R, log=True, cpu=True)
-    # print('tomo time:', time.time() - t0)
+    logR_dr = np.zeros((D, R), dtype=np.float32)
 
-    # get data
-    K_di = L.K_di[:]
+    for r0, r1, dr in utils.chunker(r_chunk_size, R):
+        # calculate tomograms
+        W_ri = tomos_cl.calculate_tomogram(r0, r1, log=True, cpu=True)
+        # print('tomo time:', time.time() - t0)
 
-    # calculate dot product
-    t0 = time.time()
-    # logR_dr = np.dot(K_di[:], W_ri.T)
+        for d0, d1, dr in utils.chunker(d_chunk_size, D):
+            # get data
+            K_di = L.K_di[d0:d1].astype(np.float32)
 
-    logR_dr_dev, evt = gpu_dot(
-        K_di[:].astype(np.float32),
-        W_ri,
-        cl['queue'], a_transp=False, b_transp=True)
-    evt.wait()
+            # calculate dot product
+            t0 = time.time()
+            # logR_dr = np.dot(K_di[:], W_ri.T)
+
+            logR_dr_dev, evt = gpu_dot(
+                K_di,
+                W_ri,
+                cl['queue'], a_transp=False, b_transp=True)
+            evt.wait()
+
+            logR_dr[d0:d1, r0:r1] += logR_dr_dev.get()
+            # print('K . W time:', time.time() - t0)
+
     t = time.time() - t0
-
-    logR_dr = logR_dr_dev.get()
-    # print('K . W time:', time.time() - t0)
 
     # offset
     L.offset(logR_dr)
 
-    return logR_dr, t
+    return logR_dr, L.wsums_r, t
 
 
 def calculate_logR_class_0_c(c, cl):
@@ -170,11 +180,14 @@ if __name__ == '__main__':
 
         cl = utils_cl.opencl_init(device_no=device)
 
-        logR_dr, t = calculate_logR_class_0_c(c, cl)
+        logR_dr, wsums_r, t = calculate_logR_class_0_c(c, cl)
         dot_time += t
 
         # save
         with h5py.File(c['logR_file'], 'w') as f:
             f['logR_dr'] = logR_dr
+
+        with h5py.File(c['P_wsums_file'], 'w') as f:
+            f['wsums_r'] = wsums_r
 
     print('K . W time:', dot_time)

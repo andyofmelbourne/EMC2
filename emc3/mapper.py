@@ -191,7 +191,7 @@ class Mapper_cl():
             int R = get_global_size(1);
             int I = get_global_size(0);
 
-            int base = 4 * r + r_offset;
+            int base = 4 * (r + r_offset);
 
             float4 v = r_i[i];
 
@@ -222,10 +222,14 @@ class Mapper_cl():
 
         elif mapper.dimensions == 3:
             out_vec_type='float4'
-            out_vec = '(float4)(r0, r1, r2, 0f)'
+            out_vec = '(float4)(r0, r1, r2, (float)0.0)'
             out_ravel_type='int'
             out_ravel = f'{N} * {N} * convert_int_rte(r0) +\
                     {N} * convert_int_rte(r1) + convert_int_rte(r2)'
+
+            # test
+            # out_ravel = f'convert_int_rte(r0)'
+            # out_ravel = f'convert_int_rte(v.w)'
 
         self.code_vec = cl.Program(
             context,
@@ -278,7 +282,7 @@ class Mapper_cl():
         self.s_chunk_size = s_chunk_size
         self.r_chunk_size = r_chunk_size
 
-    def calculate_mapping(self, s, r0, r1, ravel=False, cpu=True, n_cl=None):
+    def calculate_mapping(self, s, r00, r11, ravel=False, cpu=True, n_cl=None):
         if ravel:
             code = self.code_ravel
         else:
@@ -287,10 +291,13 @@ class Mapper_cl():
         if n_cl is None:
             n_cl = self.n_cl
 
-        r0 += s * self.mapper.shape[1]
-        r1 += s * self.mapper.shape[1]
+        r0 = r00 + s * self.mapper.shape[1]
+        r1 = r11 + s * self.mapper.shape[1]
 
-        self.event = code.mapping(
+        assert((r1 - r0)<=self.r_chunk_size)
+        assert(r1<=np.prod(self.mapper.M_sjkl.shape[:4]))
+
+        self.event = cl.Kernel(code, 'mapping')(
             self.queue,
             (self.mapper.pixels, r1-r0),
             None,
@@ -303,7 +310,7 @@ class Mapper_cl():
 
         if cpu:
             cl.enqueue_copy(self.queue, self.n_ri, self.n_cl)
-            out = self.n_ri
+            out = self.n_ri[:, :r1-r0]
         else:
             out = self.n_cl
 
