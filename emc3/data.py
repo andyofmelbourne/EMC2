@@ -2,6 +2,7 @@
 import h5py
 import numpy as np
 from tqdm import tqdm
+from pathlib import Path
 
 from scipy.sparse import csr_matrix
 
@@ -206,6 +207,15 @@ class SparseData():
 
         self.is_loaded = True
 
+    def get_sparse(self, d):
+        """
+        return non-zero counts & row indices
+        """
+        i0, i1 = self.indptr[d:d+2]
+        inds = self.row_inds[i0:i1]
+        counts = self.non_zero_values[i0:i1]
+        return inds, counts
+
     def __getitem__(self, key):
         if not self.is_loaded:
             raise ValueError('need to load all frames before calling!')
@@ -339,24 +349,154 @@ class DataSparseCXI(RawDataGetterSparseCXI):
         -> RawDataGetterSparseCXI (uses SparseData)
           -> DataSparseCXI
     """
-    def __init__(self, cxi_file, detector, mask, frames, **kwargs):
+    def __init__(self, cxi_file, detector, mask, frames, background=False, background_file=None, **kwargs):
         super().__init__(cxi_file, mask=mask, frames=frames)
         self.detector = detector
         # polarisation and solid angle correction factor:
         # N_i = C_i I(q_i)
         self.C_i = detector.C[mask]
 
+        if background:
+            self.B_di = BackCXI(self, file=background_file)
+
     def save_to_file(self):
         """
         add pixel_size and xyz coords to file for viewing
         """
         super().save_to_file()
+        self.B_di.save_to_file()
         if not self.is_loaded:
             raise ValueError('need to load all frames before saving!')
 
         with h5py.File(self.fnam, 'r+') as f:
             f['pixel_size'] = self.detector.pixel_size
             f['xyz_map'] = self.detector.xyz
+
+    def load_data(self):
+        super().load_data()
+        self.B_di.load_data()
+
+    def load_from_file(self):
+        super().load_from_file()
+        self.B_di.load_from_file()
+
+    def unload(self):
+        super().unload()
+        self.B_di.unload()
+
+
+class BackCXI():
+    """
+    B_di = BackSparseCXI(data_cxi_obj, 'B_ji', 'j_d', 'b_d')
+
+    is equivalent to:
+        B_di[d, i] = b_d[d] B_ji[j_d[d], mask][i]
+
+    where mask = data_sparse_cxi_obj.mask
+    and 'B_ji', 'j_d' and 'b_d' are datasets stored in:
+        data_sparse_cxi_obj.cxi_file
+
+    pixel slicing is not supported:
+        B_di[(1,2,3)]      good
+        B_di[:10, :]       good
+        B_di[:10, :10]     bad
+        B_di[:10][:, :10]  good
+    """
+    def __init__(
+            self,
+            data,
+            file=None,
+            B_ji='/entry_1/instrument_1/detector_1/background',
+            j_d='/entry_1/background_index',
+            b_d='/entry_1/background_weighting',
+            dtype=np.float32,
+            ):
+
+        self.dtype = dtype
+        self.data = data
+        self.shape = data.shape
+        self.frame_inds = np.arange(self.shape[0])
+        self.data_source = [B_ji, j_d, b_d]
+        self.is_loaded = False
+        if file is None:
+            file = data.cxi_file
+        self.file = file
+
+        self.B_ji = None
+        self.j_d = None
+        self.b_d = None
+        self.fnam = f'back_{id(self)}.h5'
+
+    def __getitem__(self, key):
+        assert (self.is_loaded)
+
+        # get frames
+        frames = np.atleast_1d(self.frame_inds[key])
+
+        shape = (len(frames), self.data.shape[1])
+        out = np.zeros(shape, dtype=self.dtype)
+
+        js = self.j_d[frames]
+        out[:] = self.b_d[frames, None] * self.B_ji[js]
+        return out
+
+    def load_data(self):
+        frames = self.data.frames
+        a, b, c = self.data_source
+        with h5py.File(self.file, 'r') as f:
+            self.B_ji = f[a][()][:, self.data.mask]
+            self.j_d = f[b][()][frames]
+            self.b_d = f[c][()][frames]
+
+        self.B_ji = np.ascontiguousarray(self.B_ji.astype(self.dtype))
+        self.j_d = np.ascontiguousarray(self.j_d.astype(np.int32))
+        self.b_d = np.ascontiguousarray(self.b_d.astype(self.dtype))
+
+        # data_sum = sum_i B_di
+        self.data_sum = self.b_d * np.sum(self.B_ji, axis=1)[self.j_d]
+
+        self.is_loaded = True
+
+    def save_to_file(self):
+        if not self.is_loaded:
+            raise ValueError('need to load all frames before saving!')
+
+        with h5py.File(self.fnam, 'w') as f:
+            f['B_ji'] = self.B_ji
+            f['j_d'] = self.j_d
+            f['b_d'] = self.b_d
+            f['B_d'] = self.data_sum
+
+    def load_from_file(self):
+        if self.is_loaded:
+            return
+        print('loading background')
+
+        with h5py.File(self.fnam, 'r') as f:
+            self.B_ji = f['B_ji'][()]
+            self.j_d = f['j_d'][()]
+            self.b_d = f['b_d'][()]
+            self.data_sum = f['B_d'][()]
+
+        # hack
+        fnam = 'fluence.h5'
+        if Path(fnam).is_file():
+            with h5py.File('fluence.h5') as f:
+                if 'b_d' in f:
+                    self.b_d = np.ascontiguousarray(f['b_d'][()].astype(np.float32))
+
+        self.is_loaded = True
+
+    def unload(self):
+        if self.is_loaded:
+            del self.B_ji
+            del self.j_d
+            del self.b_d
+            self.B_ji = None
+            self.j_d = None
+            self.b_d = None
+
+            self.is_loaded = False
 
 
 class DataSparseCXI_full_frame():

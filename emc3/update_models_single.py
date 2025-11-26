@@ -110,6 +110,7 @@ class Update_model_class():
             r0=None, r1=None):
 
         self.R = c['wsums_r'].shape[0]
+        print(f'1 {self.R=}')
         self.R0 = self.R
 
         if r0 is None:
@@ -123,7 +124,9 @@ class Update_model_class():
         self.r0 = r0
         self.r1 = r1
         self.R = r1 - r0
+        print(f'2 {self.R=} {r0=} {r1=}')
 
+        self.cid = c['class_id']
         self.wsums_r = c['wsums_r'][r0: r1]
         self.w_d = w_d
         self.C_i = c['data'].C_i
@@ -159,13 +162,15 @@ class Update_model_class():
         # self.r_chunk_size = self.PdotK.M_chunksize
         self.D = self.K_di.shape[0]
         self.I = self.K_di.shape[1]
+
+        print(f'{r_chunk_size=} {self.R=}')
         self.r_chunk_size = min(r_chunk_size, self.R)
         self.d_chunk_size = min(d_chunk_size, self.D)
 
         self.cl = cl
         self.mapper = c['mapper']
 
-    def calculate(self, Pmin=1e-5):
+    def calculate(self, Pmin=0):
         """
         ignore slices (r's) with no frames above Pmin
         """
@@ -180,6 +185,7 @@ class Update_model_class():
                 self.cl['context'],
                 self.cl['queue'])
 
+        print(f'{self.r_chunk_size=}')
         self.mapper_cl.load_buffers(
                 r_chunk_size=self.r_chunk_size,
                 ravel=True)
@@ -188,15 +194,25 @@ class Update_model_class():
         D_n = np.zeros(self.model.size, dtype=float)
         mtime = 0.
         btime = 0.
-        for r0, r1, dr in utils.chunker(self.r_chunk_size, self.R):
+
+        rs = np.where(np.max(self.P_dr, axis=0) > Pmin)[0]
+
+        if len(rs) < self.R:
+            self.P_dr = self.P_dr[:, rs]
+            self.wsums_r = self.wsums_r[rs]
+            print(f"skipping {self.R-len(rs)} r's for class {self.cid}")
+
+            rs_global = np.arange(0, self.R0)[self.r0: self.r1][rs]
+
+        for r0, r1, dr in utils.chunker(self.r_chunk_size, self.P_dr.shape[1]):
             # ------------------
             # 3. calculate P . K
             # ------------------
             self.N_ri = np.zeros((dr, self.I), dtype=np.float32)
-            for d0, d1, dr in utils.chunker(self.d_chunk_size, self.D):
+            for d0, d1, dd in utils.chunker(self.d_chunk_size, self.D):
                 # t0 = time()
                 # self.N_ri = self.PdotK()
-                P_dr = self.P_dr[d0:d1, r0:r1].astype(np.float32)
+                P_dr = np.ascontiguousarray(self.P_dr[d0:d1, r0:r1].astype(np.float32))
                 K_di = self.K_di[d0:d1, :].astype(np.float32)
 
                 N_ri_dev, evt = gpu_dot(
@@ -226,24 +242,28 @@ class Update_model_class():
             # --------------------------------
             for s in range(self.mapper_cl.shape[0]):
                 t0 = time()
-                n_sri = self.mapper_cl.calculate_mapping(
-                            s, r0+self.r0, r1+self.r0, ravel=True, cpu=True)
+                if len(rs) < self.R:
+                    # n_sri = np.zeros((1, dr, self.I), dtype=np.int32)
+                    n_sri = self.mapper_cl.calculate_mapping_rlist(
+                                s, rs_global[r0:r1], ravel=True, cpu=True)
+                else:
+                    n_sri = self.mapper_cl.calculate_mapping(
+                                s, r0+self.r0, r1+self.r0, ravel=True, cpu=True)
                 mtime += time() - t0
 
                 t0 = time()
-                for s in range(n_sri.shape[0]):
-                    for r in range(n_sri.shape[1]):
-                        N_n += np.bincount(
-                            n_sri[s, r],
-                            self.N_ri[r],
-                            minlength=self.model.size
-                        )
+                for r in range(n_sri.shape[0]):
+                    N_n += np.bincount(
+                        n_sri[r],
+                        self.N_ri[r],
+                        minlength=self.model.size
+                    )
 
-                        D_n += np.bincount(
-                            n_sri[s, r],
-                            D_ri[r],
-                            minlength=self.model.size
-                        )
+                    D_n += np.bincount(
+                        n_sri[r],
+                        D_ri[r],
+                        minlength=self.model.size
+                    )
                 btime += time() - t0
 
             # print(f'mapping time:', mtime)
@@ -254,75 +274,6 @@ class Update_model_class():
         with h5py.File(fnam, 'w') as f:
             f['N_n'] = N_n
             f['D_n'] = D_n
-
-    def finish(self):
-        # load chunks
-        fnams = Path('./').glob(f'class_model_chunk_{self.class_id}_*.h5')
-
-        N_n = np.zeros(self.model.size, dtype=float)
-        D_n = np.zeros(self.model.size, dtype=float)
-
-        for fnam in fnams:
-            with h5py.File(str(fnam)) as f:
-                N_n += f['N_n'][()]
-                D_n += f['D_n'][()]
-
-            # delete
-            fnam.unlink()
-
-        sym = symmetry.Symmetry(
-                self.model.i0,
-                self.model.shape,
-                self.model.symmetry
-        )
-
-        N_n = sym.apply_symmetry(
-            N_n.reshape(self.model.shape),
-        )
-
-        D_n = sym.apply_symmetry(
-            D_n.reshape(self.model.shape),
-        )
-
-        # I = N / D
-
-        m = D_n == 0
-        D_n[m] = 1.
-        N_n /= D_n
-
-        if self.filter is not None:
-            if self.model.data is not None:
-                if self.model.data.shape == N_n.shape:
-                    N_n[m] = self.model.data[m]
-
-            N_n = self.apply_filter(N_n, self.filter)
-
-        return N_n
-
-    def apply_filter(self, I_n, size):
-        """
-        apply soft Fourier low-pass filter
-        with 2xsize width
-        """
-        N = I_n.shape[0]
-        vox_size = 1 / (N * self.model.dq)
-
-        inds = np.indices(I_n.shape)
-        inds -= I_n.shape[0]//2
-        axes = tuple([i+1 for i in range(len(I_n.shape))])
-        inds = np.fft.ifftshift(inds, axes=axes)
-
-        r = np.sum(inds.astype(float)**2, axis=0)**0.5
-        rmax = min(size / vox_size, N//2-1)
-        sig = (N//2 - rmax) / 4.
-
-        filter = np.ones(r.shape, dtype=float)
-        m = r > rmax
-        filter[m] = np.exp(-(r[m]-rmax)**2 / (2 * sig**2))
-
-        Ih_n = np.fft.ifftn(np.fft.ifftshift(I_n)) * filter
-        out = np.fft.fftshift(np.fft.fftn(Ih_n))
-        return np.clip(out.real, 0, None)
 
     def _calc_CP(self, r0=0, r1=None):
         if r1 is None:
@@ -350,12 +301,84 @@ class Update_model_class():
             np.dot(self.K_d, self.P_dr[:, r0:r1])[:, None]
         return D_ri
 
+def finish(model, class_id, filter=None):
+    # load chunks
+    fnams = Path('./').glob(f'class_model_chunk_{class_id}_*.h5')
+
+    N_n = np.zeros(model.size, dtype=float)
+    D_n = np.zeros(model.size, dtype=float)
+
+    for fnam in fnams:
+        with h5py.File(str(fnam)) as f:
+            N_n += f['N_n'][()]
+            D_n += f['D_n'][()]
+
+        # delete
+        fnam.unlink()
+
+    sym = symmetry.Symmetry(
+            model.i0,
+            model.shape,
+            model.symmetry
+    )
+
+    N_n = sym.apply_symmetry(
+        N_n.reshape(model.shape),
+    )
+
+    D_n = sym.apply_symmetry(
+        D_n.reshape(model.shape),
+    )
+
+    # I = N / D
+
+    m = D_n == 0
+    D_n[m] = 1.
+    N_n /= D_n
+
+    if filter is not None:
+        if model.data is not None:
+            if model.data.shape == N_n.shape:
+                N_n[m] = model.data[m]
+
+        N_n = apply_filter(N_n, filter, model.dq)
+
+    return N_n
+
+def apply_filter(I_n, size, dq):
+    """
+    apply soft Fourier low-pass filter
+    with 2xsize width
+    """
+    N = I_n.shape[0]
+    vox_size = 1 / (N * dq)
+
+    inds = np.indices(I_n.shape)
+    inds -= I_n.shape[0]//2
+    axes = tuple([i+1 for i in range(len(I_n.shape))])
+    inds = np.fft.ifftshift(inds, axes=axes)
+
+    r = np.sum(inds.astype(float)**2, axis=0)**0.5
+    rmax = min(size / vox_size, N//2-1)
+    sig = (N//2 - rmax) / 4.
+
+    filter = np.ones(r.shape, dtype=float)
+    m = r > rmax
+    filter[m] = np.exp(-(r[m]-rmax)**2 / (2 * sig**2))
+
+    Ih_n = np.fft.ifftn(np.fft.ifftshift(I_n)) * filter
+    out = np.fft.fftshift(np.fft.fftn(Ih_n))
+    return np.clip(out.real, 0, None)
 
 
-def update_model_subprocess(config_file, config, p_per_device=2):
+
+
+def update_model_subprocess(config_file, config, p_per_device=2, update_fluence=True):
     """
     calculate tomogram sums and fluence in this process (might par. later)
     then farm off model update to subprocesses
+
+    if you are changing the model shape, then set update_fluence to False
     """
     import subprocess, sys
     from . import utils_cl, utils
@@ -365,36 +388,39 @@ def update_model_subprocess(config_file, config, p_per_device=2):
     # calculate tomogram sums if needed
     # ---------------------------------
     t0 = time()
-    for c in config['classes']:
-        # load model
-        if c['model'].data is None:
-            with h5py.File(c['model_file']) as f:
-                c['model'].data = f['data'][()]
+    if update_fluence:
+        for c in config['classes']:
+            # load model
+            if c['model'].data is None:
+                with h5py.File(c['model_file']) as f:
+                    c['model'].data = f['data'][()]
 
-        c['mapper'].load_coords(c['data'].mask)
-        c['wsums_r'] = calculate_wsums_cl(**c, cl=cl)
+            c['mapper'].load_coords(c['data'].mask)
+            c['wsums_r'] = calculate_wsums_cl(**c, cl=cl)
+
+            assert(np.all(c['wsums_r']>0))
+
+            # write to file
+            with h5py.File(c['wsums_file'], 'w') as f:
+                f['wsums_r'] = c['wsums_r']
+
+        print(f'tomo time:', time() - t0)
+
+        # calculate fluence if needed
+        # ---------------------------
+        t0 = time()
+        # load probability matrix
+        for c in config['classes']:
+            fnam = c['probability_matrix_file']
+            with h5py.File(fnam) as f:
+                c['P_dr'] = f['P_dr'][()]
+
+        w_d = calculate_fluence(config)
 
         # write to file
-        with h5py.File(c['wsums_file'], 'w') as f:
-            f['wsums_r'] = c['wsums_r']
-
-    print(f'tomo time:', time() - t0)
-
-    # calculate fluence if needed
-    # ---------------------------
-    t0 = time()
-    # load probability matrix
-    for c in config['classes']:
-        fnam = c['probability_matrix_file']
-        with h5py.File(fnam) as f:
-            c['P_dr'] = f['P_dr'][()]
-
-    w_d = calculate_fluence(config)
-
-    # write to file
-    with h5py.File(config['fluence_file'], 'w') as f:
-        f['w_d'] = w_d
-    print(f'fluence time:', time() - t0)
+        with h5py.File(config['fluence_file'], 'w') as f:
+            f['w_d'] = w_d
+        print(f'fluence time:', time() - t0)
 
     # delete P_dr to save space
     for c in config['classes']:
@@ -439,27 +465,7 @@ def update_model_subprocess(config_file, config, p_per_device=2):
     # now finish the job
     c = config['classes'][0]
 
-    # load data
-    c['data'].load_from_file()
-
-    # load model
-    with h5py.File(c['model_file']) as f:
-        c['model'].data = f['data'][()]
-
-    # load prob
-    with h5py.File(c['probability_matrix_file']) as f:
-        c['P_dr'] = f['P_dr'][()]
-
-    # load wsums
-    with h5py.File(c['wsums_file']) as f:
-        c['wsums_r'] = f['wsums_r'][()]
-
-    c['mapper'].load_coords(c['data'].mask)
-
-    t0 = time()
-    mupdate = Update_model_class(w_d, c, cl)
-
-    I = mupdate.finish()
+    I = finish(c['model'], c['class_id'], c.get('filter', None))
 
     c['model'].data = I
     print(f'update time:', time() - t0)
@@ -520,6 +526,8 @@ if __name__ == '__main__':
         c['mapper'].load_coords(c['data'].mask)
 
         t0 = time()
+        print(f'{r0=} {r1=} {sys.argv=}')
+        print(f'{r0=} {r1=} {sys.argv=}')
         mupdate = Update_model_class(w_d, c, cl, r0=r0, r1=r1)
 
         # calculate chunk

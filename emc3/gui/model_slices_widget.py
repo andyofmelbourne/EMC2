@@ -377,12 +377,12 @@ class Model_slice_widget(ImageView):
         super().__init__(self.slice_getter, view=pg.PlotItem())
 
         self.class_labels_key = 'class_labels' # class labels for full dataset
-        self.class_labels_file = 'selected_classes.h5' # class labels for full dataset
+        self.class_labels_file = 'selected_classes_multi.h5' # class labels for full dataset
 
         # load previously saved selection
         if Path(self.class_labels_file).is_file():
             with h5py.File(self.class_labels_file) as f:
-                self.selected_labels = f['selected_classes'][()]
+                self.selected_labels = list(f['selected_classes'][()])
                 self.update_plots(current=True)
 
 

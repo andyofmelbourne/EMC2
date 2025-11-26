@@ -51,10 +51,28 @@ class Model():
         N = self.shape[0]
         I = blob(N, self.dq)
         I *= (np.random.random(I.shape) + 0.1)
-        self.data = I
+        s = self.ndim * (slice(None),)
+        self.data = I[s]
+
+    def init_blob_multi(self):
+        N = self.shape[0]
+        I = blob_multi(N, self.dq)
+        I *= (np.random.random(I.shape) + 0.1)
+        s = self.ndim * (slice(None),)
+        self.data = I[s]
 
 def blob(N, dq):
     sigma_z = 8 * 5.58661e+06
+    sigma_x = 4 * 5.58661e+06
+    i = dq * np.fft.fftshift(np.fft.fftfreq(N, 1/N))
+    x = i[:, None, None]
+    y = i[None, :, None]
+    z = i[None, None, :]
+    I = np.exp(-(x**2 + y**2)/(2*sigma_x**2) - z**2/(2*sigma_z**2))
+    return I
+
+def blob_multi(N, dq):
+    sigma_z = 3 * 5.58661e+06
     sigma_x = 4 * 5.58661e+06
     i = dq * np.fft.fftshift(np.fft.fftfreq(N, 1/N))
     x = i[:, None, None]

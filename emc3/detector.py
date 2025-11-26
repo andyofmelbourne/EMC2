@@ -43,6 +43,7 @@ class Detector():
         self.Omega = pixel_area * xyz[2] / r**3
 
         # merged intensity to frame correction factor (scaled)
+        # diffraction = C x W
         self.C = self.Omega * self.P
         self.C /= self.C.max()
 

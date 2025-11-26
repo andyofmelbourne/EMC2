@@ -1,5 +1,6 @@
 import sys
 import h5py
+import numpy as np
 from PyQt5.QtWidgets import QApplication, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from .nested_list_widget import NestedListWidget
@@ -23,7 +24,7 @@ class H5_list_widget(NestedListWidget):
     def update_data(self, fnams):
         # get contents of h5 file
         data = {}
-        for fnam in fnams:
+        for fnam in np.sort(fnams):
             try:
                 with h5py.File(fnam) as f:
                     data[fnam] = hdf5_to_dict_flatter(f)

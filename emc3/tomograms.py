@@ -4,7 +4,7 @@ from scipy.interpolate import interpn
 
 import pyopencl as cl
 import pyopencl.array
-from .utils_cl import to_gpu_image, to_gpu
+from .utils_cl import to_gpu_image
 from .utils import chunker
 
 class Tomograms():
@@ -54,6 +54,7 @@ class Tomograms():
 class Tomograms_cl():
 
     def __init__(self, tomo, context, queue):
+        # should combine kernels in future
         code = """
         constant sampler_t interpolation =
         CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_{interpolation} ;
@@ -93,6 +94,43 @@ class Tomograms_cl():
             float4 W = read_imagef(I_im, interpolation, {n});
             W_ri[r * I + i] = {out} * C_i[i];
         }}
+
+        __kernel void tomo_list(
+            global float *W_ri,
+            __read_only image{dim}d_t I_im,
+            global float4 *r_i,
+            global float4 *M_r,
+            global float *C_i,
+            global int *rs,
+            global int *is
+        )
+        {{
+            int r = get_global_id(1);
+            int i = get_global_id(0);
+            int R = get_global_size(1);
+            int I = get_global_size(0);
+
+            int base = 4 * rs[r];
+
+            float4 v = r_i[is[i]];
+
+            // offset r - dr
+            v = v - M_r[base + 3];
+
+            // normalise (r-dr) / |r-dr|
+            v = normalize(v);
+
+            // restore translation bit
+            v.w = 1.f;
+
+            // map pixel to voxel
+            float r0 = dot(M_r[base + 0], v) + 0.5f;
+            float r1 = dot(M_r[base + 1], v) + 0.5f;
+            float r2 = dot(M_r[base + 2], v) + 0.5f;
+
+            float4 W = read_imagef(I_im, interpolation, {n});
+            W_ri[r * I + i] = {out} * C_i[is[i]];
+        }}
         """
         dim = len(tomo.model.shape)
         self.shape = tomo.shape
@@ -124,11 +162,15 @@ class Tomograms_cl():
         self.context = context
         self.tomo = tomo
 
-    def load_buffers(self, r_chunk_size=1):
+    def load_buffers(self, r_chunk_size=1, buffer_size=None):
         self.I_im = to_gpu_image(self.tomo.model.data, self.queue, self.context)
 
-        self.W_ri = np.empty((r_chunk_size, self.tomo.shape[1]),
-                             dtype=np.float32)
+        if buffer_size is not None:
+            self.W_ri = np.empty((buffer_size), dtype=np.float32)
+            self.buffer_size = buffer_size
+        else:
+            self.W_ri = np.empty((r_chunk_size, self.tomo.shape[1]),
+                                 dtype=np.float32)
 
         mf = cl.mem_flags
         self.C_cl = cl.Buffer(self.context, mf.READ_ONLY |
@@ -139,6 +181,12 @@ class Tomograms_cl():
                               mf.COPY_HOST_PTR, hostbuf=self.tomo.mapper.r)
         self.W_cl = cl.Buffer(self.context, mf.READ_WRITE,
                               self.W_ri.nbytes)
+
+    def get_W_cl(self, dr):
+        self.event.wait()
+        cl.enqueue_copy(self.queue, self.W_ri, self.W_cl)
+        out = self.W_ri[:dr]
+        return out
 
     def calculate_tomogram(self, r0, r1, log=False, cpu=True, W_cl=None):
         if log:
@@ -160,11 +208,62 @@ class Tomograms_cl():
             self.C_cl,
             np.int32(r0)
         )
-        self.event.wait()
 
         if cpu:
-            cl.enqueue_copy(self.queue, self.W_ri, self.W_cl)
-            out = self.W_ri[:r1-r0]
+            out = self.get_W_cl(r1 - r0)
+        else:
+            out = self.W_cl
+
+        return out
+
+    def calculate_tomogram_rlist_pixlist(self, rs, pix, log=False, cpu=True, W_cl=None):
+        if log:
+            code = self.code_log
+        else:
+            code = self.code
+
+        if W_cl is None:
+            W_cl = self.W_cl
+
+        mf = cl.mem_flags
+        r_s = np.ascontiguousarray(rs.astype(np.int32))
+        i_s = np.ascontiguousarray(pix.astype(np.int32))
+
+        # assume increasing
+        assert (r_s[-1]<self.shape[0])
+        assert (i_s[-1]<self.shape[-1])
+
+        r_s_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                mf.COPY_HOST_PTR, hostbuf=r_s)
+        i_s_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                mf.COPY_HOST_PTR, hostbuf=i_s)
+
+        self.event = cl.Kernel(code, 'tomo_list')(
+            self.queue,
+            (len(pix), len(rs)),
+            None,
+            W_cl,
+            self.I_im,
+            self.r_cl,
+            self.M_cl,
+            self.C_cl,
+            r_s_cl,
+            i_s_cl
+        )
+
+        size = len(rs) * len(pix)
+        if size > self.W_ri.size:
+            print()
+            print()
+            print(f'buffer size too small! {len(rs)=} {len(pix)=} {self.W_ri.size=}')
+            print(f'{self.buffer_size=} {id(self)=}')
+            print()
+            print()
+
+        if cpu:
+            self.event.wait()
+            cl.enqueue_copy(self.queue, self.W_ri[:size], self.W_cl)
+            out = self.W_ri[:size].reshape((len(rs), len(pix)))
         else:
             out = self.W_cl
 
@@ -186,5 +285,7 @@ class Tomograms_cl():
             W_ri = self.calculate_tomogram(r0+r00, r0+r11, cpu=True)
 
             wsums_r[r0+r00:r0+r11] = np.sum(W_ri[:dr], axis=1)
+            assert(np.all(wsums_r[r0+r00:r0+r11]>0))
+
         return wsums_r
 

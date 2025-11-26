@@ -226,7 +226,7 @@ class SLURM():
                 ["tail", "-n", "1", f'{working_directory_remote}/{self.log_file}']
 
         self.stream_log_cmd = self.prepend + \
-                ['tail', '-f', f'{self.working_directory_remote}/{self.log_file}']
+                ['timeout', '5m', 'tail', '-f', f'{self.working_directory_remote}/{self.log_file}']
 
     def write_slurm_script(self):
         cmd = ' '.join(self.write_cmd)

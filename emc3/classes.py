@@ -44,6 +44,10 @@ def make_config(config):
         fnam = wd / f"fluence.h5"
         config[k] = fnam
 
+    k = 'update_fluence'
+    if k not in config or config[k] is None:
+        config[k] = True
+
     for i, c in enumerate(config['classes']):
         d = dict(default_class)
         d.update(c)
@@ -53,6 +57,8 @@ def make_config(config):
 
         d['r_offset'] = r_offset
         r_offset += d['mapper'].shape[1]
+
+        d['fluence_file'] = config['fluence_file']
 
         if d['probability_matrix_file'] is None:
             fnam = wd / f"class_probability_matrix_{d['class_id']}.h5"

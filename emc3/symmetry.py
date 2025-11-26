@@ -1,4 +1,5 @@
 import numpy as np
+import itertools
 
 
 class Symmetry_old():
@@ -419,10 +420,32 @@ class Symmetry():
 
         return out.reshape(ar.shape)
 
+    def get_symmetry_ims(self, ar):
+        """
+        return all possible symmetry related views of ar
+        """
+        # out = np.zeros((len(self.sym_ops), ar.size), dtype=ar.dtype)
+        out = []
+        im = np.zeros((ar.size,), dtype=ar.dtype)
+        ref = np.zeros((ar.size,), dtype=ar.dtype)
+        ref[:] = ar.ravel()
 
+        # loop over number of symmetry ops, e.g (D6):
+        # skip P1
+        #    Px, Py, inv (l=1)
+        #    Px Py, Py inv ... (l=2)
+        out.append(ref.copy())
+        for l in range(1, len(self.sym_ops)):
+            # loop over all combinations of ops of length l
+            for ops in itertools.combinations(self.sym_ops[1:], l):
+                mapping = ops[0]
+                # loop over symmetry ops to be compounded:
+                for op in ops[1:]:
+                    mapping = mapping[op]
 
+                out.append(ref[mapping].copy())
 
-
+        return np.array(out).reshape((-1,) + ar.shape)
 
 
 def apply_symmetry_2D(ar, symmetry, i0):
@@ -503,6 +526,20 @@ def get_non_voxel_operators(dimensions, symmetry):
             c = 0.5;
             s = 0.8660254037844386;
             Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+            P1 = np.array([[1, 0, 0],  [0, 1, 0], [0, 0, 1]])
+            return np.array([P1, Rz, Rz.dot(Rz)])
+        else :
+            raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
+    """
+    elif symmetry == 'D6' or symmetry == 'C6':
+        if dimensions == 3:
+            # 3 x pi / 3 rotations about z-axis
+            #coord.x = x * c - y * s;
+            #coord.y = x * s + y * c;
+            c = 0.5;
+            s = 0.8660254037844386;
+            Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
             return np.array([Rz, Rz.dot(Rz), Rz.dot(Rz.dot(Rz))])
         else :
             raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
+    """

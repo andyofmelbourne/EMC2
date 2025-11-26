@@ -232,7 +232,7 @@ class Bincount_cl():
 
         self.buffer[:N] = buffer.ravel()
 
-        event = self.cl_code.add(
+        event = cl.Kernel(self.cl_code, 'add')(
                 self.queue, (1,), (1,),
                 cl.SVM(self.buffer),
                 cl.SVM(self.out),

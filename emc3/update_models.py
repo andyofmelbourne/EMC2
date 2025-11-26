@@ -138,6 +138,31 @@ def gpu_dot(A, B, queue, a_transp=False, b_transp=False):
     return C_dev, evt
 
 
+def apply_filter(dq, I_n, size):
+    """
+    apply soft Fourier low-pass filter
+    with 2xsize width
+    """
+    N = I_n.shape[0]
+    vox_size = 1 / (N * dq)
+
+    inds = np.indices(I_n.shape)
+    inds -= I_n.shape[0]//2
+    axes = tuple([i+1 for i in range(len(I_n.shape))])
+    inds = np.fft.ifftshift(inds, axes=axes)
+
+    r = np.sum(inds.astype(float)**2, axis=0)**0.5
+    rmax = min(size / vox_size, N//2-1)
+    sig = (N//2 - rmax) / 4.
+
+    filter = np.ones(r.shape, dtype=float)
+    m = r > rmax
+    filter[m] = np.exp(-(r[m]-rmax)**2 / (2 * sig**2))
+
+    Ih_n = np.fft.ifftn(np.fft.ifftshift(I_n)) * filter
+    out = np.fft.fftshift(np.fft.fftn(Ih_n))
+    return np.clip(out.real, 0, None)
+
 
 class Update_model_class():
     """
@@ -252,19 +277,18 @@ class Update_model_class():
                 mtime += time() - t0
 
                 t0 = time()
-                for s in range(n_sri.shape[0]):
-                    for r in range(n_sri.shape[1]):
-                        N_n += np.bincount(
-                            n_sri[s, r],
-                            self.N_ri[r],
-                            minlength=self.model.size
-                        )
+                for r in range(n_sri.shape[0]):
+                    N_n += np.bincount(
+                        n_sri[r],
+                        self.N_ri[r],
+                        minlength=self.model.size
+                    )
 
-                        D_n += np.bincount(
-                            n_sri[s, r],
-                            D_ri[r],
-                            minlength=self.model.size
-                        )
+                    D_n += np.bincount(
+                        n_sri[r],
+                        D_ri[r],
+                        minlength=self.model.size
+                    )
                 btime += time() - t0
 
             # print(f'mapping time:', mtime)
@@ -291,38 +315,18 @@ class Update_model_class():
         N_n /= D_n
 
         if self.filter is not None:
+            t = N_n.copy()
             if self.model.data is not None:
                 if self.model.data.shape == N_n.shape:
-                    N_n[m] = self.model.data[m]
+                    t[m] = self.model.data[m]
 
-            N_n = self.apply_filter(N_n, self.filter)
+            for i in range(3):
+                t[~m] = N_n[~m]
+                t = apply_filter(self.model.dq, t, self.filter)
+
+            N_n = t
 
         return N_n
-
-    def apply_filter(self, I_n, size):
-        """
-        apply soft Fourier low-pass filter
-        with 2xsize width
-        """
-        N = I_n.shape[0]
-        vox_size = 1 / (N * self.model.dq)
-
-        inds = np.indices(I_n.shape)
-        inds -= I_n.shape[0]//2
-        axes = tuple([i+1 for i in range(len(I_n.shape))])
-        inds = np.fft.ifftshift(inds, axes=axes)
-
-        r = np.sum(inds.astype(float)**2, axis=0)**0.5
-        rmax = min(size / vox_size, N//2-1)
-        sig = (N//2 - rmax) / 4.
-
-        filter = np.ones(r.shape, dtype=float)
-        m = r > rmax
-        filter[m] = np.exp(-(r[m]-rmax)**2 / (2 * sig**2))
-
-        Ih_n = np.fft.ifftn(np.fft.ifftshift(I_n)) * filter
-        out = np.fft.fftshift(np.fft.fftn(Ih_n))
-        return np.clip(out.real, 0, None)
 
     def _calc_CP(self, r0=0, r1=None):
         if r1 is None:

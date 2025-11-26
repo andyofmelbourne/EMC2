@@ -485,7 +485,7 @@ class PlotWidget2D(PlotWidgetBase):
         self.plot_item.addItem(self.img_item)
 
         # hide grid
-        self.plot_item.showGrid(x=True, y=True)
+        self.plot_item.showGrid(x=False, y=False)
 
         # set defaults
         self.autoRange = True

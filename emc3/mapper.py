@@ -133,7 +133,8 @@ class Mapper():
         S, J, K, L, _, _ = self.M_sjkl.shape
 
         self.model_shape = model.shape
-        self.shape = (S, J*K*L)
+        self.shape0 = (S, J*K*L)
+        self.shape = self.shape0
         self.offsets = np.array(offsets)
         self.mask = None
 
@@ -147,6 +148,7 @@ class Mapper():
         self.r[:, :3]  = self.xyz[:, mask].T
         self.rhat = np.ones((pixels, 4), dtype=np.float32)
         self.pixels = pixels
+        self.shape = self.shape0 + (pixels,)
 
     def calculate_mapping(self, r, s=0):
         """
@@ -171,47 +173,114 @@ class Mapper():
         n = np.ravel_multi_index(n.T, self.model_shape)
         return n
 
+# should break this down for fusing with tomograms
+mapper_code = """
+__kernel void mapping(
+    global {out_type} *n_ri,
+    global float4 *r_i,
+    global float4 *M_r,
+    const int r_offset
+)
+{{
+    int r = get_global_id(1);
+    int i = get_global_id(0);
+    int R = get_global_size(1);
+    int I = get_global_size(0);
+
+    int base = 4 * (r + r_offset);
+
+    float4 v = r_i[i];
+
+    // offset r - dr
+    v = v - M_r[base + 3];
+
+    // normalise (r-dr) / |r-dr|
+    v = normalize(v);
+
+    // restore translation bit
+    v.w = 1.f;
+
+    // map pixel to voxel
+    float r0 = dot(M_r[base + 0], v);
+    float r1 = dot(M_r[base + 1], v);
+    float r2 = dot(M_r[base + 2], v);
+
+    n_ri[r * I + i] = {out};
+}}
+
+__kernel void mapping_rlist(
+    global {out_type} *n_ri,
+    global float4 *r_i,
+    global float4 *M_r,
+    global int *rs
+)
+{{
+    int r = get_global_id(1);
+    int i = get_global_id(0);
+    int R = get_global_size(1);
+    int I = get_global_size(0);
+
+    int base = 4 * rs[r];
+
+    float4 v = r_i[i];
+
+    // offset r - dr
+    v = v - M_r[base + 3];
+
+    // normalise (r-dr) / |r-dr|
+    v = normalize(v);
+
+    // restore translation bit
+    v.w = 1.f;
+
+    // map pixel to voxel
+    float r0 = dot(M_r[base + 0], v);
+    float r1 = dot(M_r[base + 1], v);
+    float r2 = dot(M_r[base + 2], v);
+
+    n_ri[r * I + i] = {out};
+}}
+
+__kernel void mapping_rlist_pixlist(
+    global {out_type} *n_ri,
+    global float4 *r_i,
+    global float4 *M_r,
+    global int *rs,
+    global int *is
+)
+{{
+    int r = get_global_id(1);
+    int i = get_global_id(0);
+    int R = get_global_size(1);
+    int I = get_global_size(0);
+
+    int base = 4 * rs[r];
+
+    float4 v = r_i[is[i]];
+
+    // offset r - dr
+    v = v - M_r[base + 3];
+
+    // normalise (r-dr) / |r-dr|
+    v = normalize(v);
+
+    // restore translation bit
+    v.w = 1.f;
+
+    // map pixel to voxel
+    float r0 = dot(M_r[base + 0], v);
+    float r1 = dot(M_r[base + 1], v);
+    float r2 = dot(M_r[base + 2], v);
+
+    n_ri[r * I + i] = {out};
+}}
+"""
 
 class Mapper_cl():
 
     def __init__(self, mapper, context, queue):
         self.shape = mapper.shape
 
-        # should break this down for fusing with tomograms
-        code = """
-        __kernel void mapping(
-            global {out_type} *n_ri,
-            global float4 *r_i,
-            global float4 *M_r,
-            const int r_offset
-        )
-        {{
-            int r = get_global_id(1);
-            int i = get_global_id(0);
-            int R = get_global_size(1);
-            int I = get_global_size(0);
-
-            int base = 4 * (r + r_offset);
-
-            float4 v = r_i[i];
-
-            // offset r - dr
-            v = v - M_r[base + 3];
-
-            // normalise (r-dr) / |r-dr|
-            v = normalize(v);
-
-            // restore translation bit
-            v.w = 1.f;
-
-            // map pixel to voxel
-            float r0 = dot(M_r[base + 0], v);
-            float r1 = dot(M_r[base + 1], v);
-            float r2 = dot(M_r[base + 2], v);
-
-            n_ri[r * I + i] = {out};
-        }}
-        """
         N = mapper.model_shape[0]
 
         if mapper.dimensions == 2:
@@ -233,14 +302,14 @@ class Mapper_cl():
 
         self.code_vec = cl.Program(
             context,
-            code.format(
+            mapper_code.format(
                 out_type=out_vec_type,
                 out=out_vec)
         ).build()
 
         self.code_ravel = cl.Program(
             context,
-            code.format(
+            mapper_code.format(
                 out_type=out_ravel_type,
                 out=out_ravel)
         ).build()
@@ -252,8 +321,10 @@ class Mapper_cl():
         self.s_chunk_size = None
         self.r_chunk_size = None
         self.ravel = None
+        self.buffers_loaded = False
 
-    def load_buffers(self, s_chunk_size=1, r_chunk_size=1, ravel=False):
+    def load_buffers(self, r_chunk_size=1, ravel=False):
+        s_chunk_size = 1
         if (
             ravel == self.ravel
             and s_chunk_size == self.s_chunk_size
@@ -281,8 +352,11 @@ class Mapper_cl():
         self.ravel = ravel
         self.s_chunk_size = s_chunk_size
         self.r_chunk_size = r_chunk_size
+        self.buffers_loaded = True
 
     def calculate_mapping(self, s, r00, r11, ravel=False, cpu=True, n_cl=None):
+        assert (self.buffers_loaded)
+
         if ravel:
             code = self.code_ravel
         else:
@@ -309,9 +383,153 @@ class Mapper_cl():
         self.event.wait()
 
         if cpu:
-            cl.enqueue_copy(self.queue, self.n_ri, self.n_cl)
-            out = self.n_ri[:, :r1-r0]
+            cl.enqueue_copy(self.queue, self.n_ri[0], self.n_cl)
+            out = self.n_ri[0, :r1-r0]
         else:
             out = self.n_cl
 
         return out
+
+    def calculate_mapping_rlist(self, s, rs, ravel=False, cpu=True, n_cl=None):
+        if ravel:
+            code = self.code_ravel
+        else:
+            code = self.code_vec
+
+        if n_cl is None:
+            n_cl = self.n_cl
+
+        mf = cl.mem_flags
+        o = s * self.mapper.shape[1]
+        rs = np.ascontiguousarray((rs + o).astype(np.int32))
+        rs_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                              mf.COPY_HOST_PTR, hostbuf=rs)
+
+        assert(len(rs)<=self.r_chunk_size)
+        assert(rs[-1]<=np.prod(self.mapper.M_sjkl.shape[:4]))
+
+        self.event = cl.Kernel(code, 'mapping_rlist')(
+            self.queue,
+            (self.mapper.pixels, len(rs)),
+            None,
+            n_cl,
+            self.r_cl,
+            self.M_cl,
+            rs_cl
+        )
+        self.event.wait()
+
+        if cpu:
+            cl.enqueue_copy(self.queue, self.n_ri, self.n_cl)
+            out = self.n_ri[0, :len(rs)]
+        else:
+            out = self.n_cl
+
+        return out
+
+
+class Mapper_cl_cpu_sparse(Mapper_cl):
+
+    def __init__(self, mapper, context, queue):
+        super().__init__(mapper, context, queue)
+
+    def calculate_mapping_rlist_pixlist(self, s, rs, pix, ravel=False):
+        if ravel:
+            code = self.code_ravel
+        else:
+            code = self.code_vec
+
+        o = s * self.mapper.shape[1]
+        r_s = np.ascontiguousarray((rs + o).astype(np.int32))
+        i_s = np.ascontiguousarray(pix.astype(np.int32))
+
+        n_ri = np.empty((len(rs), len(pix)), dtype=np.int32)
+
+        assert(r_s[-1]<np.prod(self.mapper.M_sjkl.shape[:4]))
+        assert(i_s[-1]<self.shape[-1])
+
+        self.event = cl.Kernel(code, 'mapping_rlist_pixlist')(
+            self.queue,
+            (len(pix), len(rs)),
+            None,
+            cl.SVM(n_ri),
+            cl.SVM(self.mapper.r),
+            cl.SVM(self.mapper.M_sjkl),
+            cl.SVM(r_s),
+            cl.SVM(i_s)
+        )
+        self.event.wait()
+
+        return n_ri
+
+class Mapper_cl_gpu_sparse(Mapper_cl):
+
+    def __init__(self, mapper, context, queue):
+        self.buffer_size = 1
+        super().__init__(mapper, context, queue)
+
+    def calculate_mapping_rlist_pixlist(self, s, rs, pix, cpu=True, ravel=True):
+        if ravel:
+            code = self.code_ravel
+        else:
+            code = self.code_vec
+
+        o = s * self.mapper.shape[1]
+        r_s = np.ascontiguousarray((rs + o).astype(np.int32))
+        i_s = np.ascontiguousarray(pix.astype(np.int32))
+
+        assert((r_s[-1]+o)<np.prod(self.mapper.M_sjkl.shape[:4]))
+        assert(i_s[-1]<self.shape[-1])
+
+        mf = cl.mem_flags
+        r_s_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                mf.COPY_HOST_PTR, hostbuf=r_s)
+        i_s_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                mf.COPY_HOST_PTR, hostbuf=i_s)
+
+        self.event = cl.Kernel(code, 'mapping_rlist_pixlist')(
+            self.queue,
+            (len(pix), len(rs)),
+            None,
+            self.n_cl,
+            self.r_cl,
+            self.M_cl,
+            r_s_cl,
+            i_s_cl
+        )
+        self.event.wait()
+
+        size = len(rs) * len(pix)
+        if cpu:
+            cl.enqueue_copy(self.queue, self.n_ri[:size], self.n_cl)
+            out = self.n_ri[:size].reshape((len(rs), len(pix)))
+        else:
+            out = self.n_cl
+
+        return out
+
+    def load_buffers(self, buffer_size, ravel=False):
+        if (
+            ravel == self.ravel
+            and buffer_size == self.buffer_size
+        ):
+            return
+
+        if ravel:
+            self.n_ri = np.empty((buffer_size), dtype=np.int32)
+        else:
+            self.n_ri = np.empty((buffer_size, self.mapper.dimensions), dtype=np.int32)
+
+        mf = cl.mem_flags
+        self.M_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                              mf.COPY_HOST_PTR, hostbuf=self.mapper.M_sjkl)
+        self.r_cl = cl.Buffer(self.context, mf.READ_ONLY |
+                              mf.COPY_HOST_PTR, hostbuf=self.mapper.r)
+        self.n_cl = cl.Buffer(self.context, mf.READ_WRITE,
+                              self.n_ri.nbytes)
+
+        self.ravel = ravel
+        self.buffer_size = buffer_size
+        self.buffers_loaded = True
+
+
