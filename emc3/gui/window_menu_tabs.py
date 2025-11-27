@@ -96,7 +96,7 @@ class MainWindowOld(QMainWindow):
         # Menu bar
         menubar = self.menuBar()
         menubar.setNativeMenuBar(True)
-        menubar.setVisible(True) 
+        menubar.setVisible(True)
         file_menu = menubar.addMenu("File")
 
         new_tab_action = QAction("New Tab", self)
@@ -142,6 +142,8 @@ class MainWindowOld2(QMainWindow):
                     raise TypeError(f"Unsupported value for key {key}: {type(val)}")
 
         menubar = self.menuBar()
+        menubar.setNativeMenuBar(True)
+        menubar.setVisible(True)
         for top_key, structure in menu_dict.items():
             menu = menubar.addMenu(top_key)
             add_menu_items(menu, structure)
@@ -169,6 +171,8 @@ class MainWindow(QMainWindow):
          - callable -> factory producing a QWidget (recommended)
         """
         menubar = self.menuBar()
+        menubar.setNativeMenuBar(True)
+        menubar.setVisible(True)
 
         def add_menu_items(menu, structure):
             for key, val in structure.items():
