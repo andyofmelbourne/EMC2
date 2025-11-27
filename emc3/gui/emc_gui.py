@@ -10,7 +10,7 @@ import sys
 import pyqtgraph as pg
 
 from PyQt5.QtWidgets import QApplication
-import Qt
+from PyQt5.QtCore import Qt
 
 from .cxi_gui import CXI_viewer
 from .mask_gui import Mask_maker
