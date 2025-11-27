@@ -95,6 +95,8 @@ class MainWindowOld(QMainWindow):
 
         # Menu bar
         menubar = self.menuBar()
+        menubar.setNativeMenuBar(True)
+        menubar.setVisible(True) 
         file_menu = menubar.addMenu("File")
 
         new_tab_action = QAction("New Tab", self)
