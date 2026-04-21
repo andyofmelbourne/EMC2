@@ -8,6 +8,7 @@ from . import update_models
 from . import update_models_single
 from . import calculate_logR_single
 from . import background
+#from . import show_occupancy_shifts
 
 from .detector import Detector_cxi
 from .model import Model

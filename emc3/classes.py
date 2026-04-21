@@ -7,7 +7,7 @@ default_class = {
     'model': None,
     'mapper': None,
     'interpolation_forward': 'linear',
-    'likelihood': 'Poisson_fluence_free',
+    'likelihood': 'fluence_free',
     'frame_model': 'basic',
     'maximise': 'W',
     'P_thresh': 0,

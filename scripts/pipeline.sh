@@ -81,7 +81,7 @@ for (( iteration = 0; iteration < iterations; iteration++ )); do
 	rm -f ${DIR}/cachdir/class_*.txt
 
 	# check for config updates that need to be updated now
-	if [[ $iteration == 0 && $restart != "True" ]]; then 
+	if [[ $iteration == 0 && $restart != "True" ]]; then
 		parallel --verbose --jobs 50% python scripts/check_config.py --prob $1 ::: ${DIR}/class_*.h5
 	fi
 

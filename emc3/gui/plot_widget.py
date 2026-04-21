@@ -29,12 +29,125 @@ import sys
 from PyQt5.QtWidgets import QApplication
 import pyqtgraph as pg
 import numpy as np
+import h5py
 
 from PyQt5.QtWidgets import (
         QApplication, QWidget, QHBoxLayout, QVBoxLayout, QTreeWidget,
-        QTreeWidgetItem, QLabel, QSlider, QAction, QMenu, QDialog, QPushButton
+        QTreeWidgetItem, QLabel, QSlider, QAction, QMenu, QDialog, QPushButton,
+        QButtonGroup, QLineEdit, QCheckBox
         )
 from PyQt5.QtCore import Qt, pyqtSignal
+
+# Get key mappings from Qt namespace
+qt_keys = (
+    (getattr(Qt, attr), attr[4:])
+    for attr in dir(Qt)
+    if attr.startswith("Key_")
+)
+from collections import defaultdict
+keys_mapping = defaultdict(lambda: "unknown", qt_keys)
+
+class LabelOptions(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent, flags=Qt.Window)
+
+        self.parent = parent
+        self.setWindowTitle("Label options")
+        layout = QVBoxLayout(self)
+
+        # toggle / mask / unmask checkboxes
+        self.write_checkbox = QCheckBox('write (must not exist)')
+        self.overwrite_checkbox = QCheckBox('overwrite')
+        self.add_checkbox = QCheckBox('add')
+        self.remove_checkbox = QCheckBox('remove')
+        self.write_checkbox.setChecked(True)
+
+        toggle_group = QButtonGroup(self)
+        toggle_group.addButton(self.overwrite_checkbox)
+        toggle_group.addButton(self.add_checkbox)
+        toggle_group.addButton(self.remove_checkbox)
+        toggle_group.addButton(self.write_checkbox)
+        toggle_group.setExclusive(True)
+
+        hbox = QHBoxLayout()
+        hbox.addWidget(self.overwrite_checkbox)
+        hbox.addWidget(self.add_checkbox)
+        hbox.addWidget(self.remove_checkbox)
+        hbox.addWidget(self.write_checkbox)
+        layout.addLayout(hbox)
+
+        # load current mask
+        self.load_label_button = QPushButton("Load labels")
+        layout.addWidget(self.load_label_button)
+
+        # save button
+        save_layout = QHBoxLayout()
+        self.save_button = QPushButton("Save")
+        self.save_field = QLineEdit()
+        self.save_field.setText("labels.h5/frames")  # set default value
+
+        save_layout.addWidget(self.save_button)
+        save_layout.addWidget(self.save_field)
+        layout.addLayout(save_layout)
+
+    def closeEvent(self, event):
+        # this should be a signal
+        self.parent.label_options = None
+        super().closeEvent(event)
+
+    def get_filename_dataset(self, fnam=None):
+        if fnam is None:
+            fnam = self.save_field.text()
+
+        # get extension ('.h5')
+        extension = '.' + fnam.split('.')[1].split('/')[0]
+
+        # get file name ('root/filename.h5')
+        filename = fnam.split(extension)[0]
+        filename = f'{filename}{extension}'
+
+        # get dataset ('/data/dataset')
+        dataset = fnam.split(extension)[1]
+        return filename, dataset
+
+    def save_labels(self, labels):
+        filename, dataset = self.get_filename_dataset()
+
+        l = set(labels)
+
+        if self.add_checkbox.isChecked():
+            l2 = self.load_labels()
+            l.update(l2)
+
+        elif self.remove_checkbox.isChecked():
+            l2 = self.load_labels()
+            l = l2 - l
+
+        with h5py.File(filename, 'a') as f:
+            if dataset in f:
+                if self.write_checkbox.isChecked():
+                    raise ValueError(f'Cannot write to {filename}/{dataset}. Dataset exists.')
+                else:
+                    del f[dataset]
+
+            f[dataset] = np.sort(np.array(list(l)))
+
+        print(f'saved {len(l)} labels to {filename}/{dataset}')
+
+        return l
+
+    def load_labels(self):
+        filename, dataset = self.get_filename_dataset()
+
+        with h5py.File(filename, 'r') as f:
+            l = f[dataset][()]
+
+        if not np.issubdtype(l.dtype, np.integer):
+            raise ValueError('label dataset is not integer! {l.dtype}')
+
+        print(f'loaded {len(l)} labels from {filename}/{dataset}')
+
+        return set(l.tolist())
 
 
 class PlotWidget(QWidget):
@@ -90,18 +203,26 @@ class PlotWidget(QWidget):
 
         return Widget
 
-    def plot(self, data, name=None):
+    def plot(self, data, name=None, plugin=None):
         self.remove_current_plot()
 
         self.data = data
 
+        if hasattr(data, 'callback'):
+            data.callback = self.refresh
+
         Widget = self.choose_widget(data)
+
+        # if plugin is not None then
+        # let it do what it wants with the widget
+        if plugin is not None:
+            Widget = plugin(Widget)
 
         self.current_plot = Widget(
                 parent=self,
                 data=data,
                 title=name,
-                open_plots=self.open_plots
+                open_plots=self.open_plots,
                 )
 
         self.current_plot.plot()
@@ -117,7 +238,7 @@ class PlotWidget(QWidget):
         if ndim0 != ndim1:
             err = f'cannot update_data with different \
                     dimensions {ndim0} {ndim1}'
-            raise ValueError(err)
+            raise Warning(err)
 
         # update data source without destroying widget
         self.current_plot.data = data
@@ -347,6 +468,10 @@ class PlotWidgetBase(QWidget):
         self.data = data
         self.xmap = np.arange(len(data))
 
+        # for user defined labels
+        self.label_selection = set()
+        self.label_options = None
+
         self.lock_aspect = True
 
         layout = QVBoxLayout(self)
@@ -457,6 +582,76 @@ class PlotWidgetBase(QWidget):
         if self.linked_axis is not None:
             self.linked_axis.remove(self)
 
+    def add_labels_menu(self):
+        # prevent multiple popups
+        if self.label_options is None:
+            # add menu items to pop up window
+            self.label_options = LabelOptions(self)
+
+            # Connect popup buttons to main window functions
+            self.label_options.load_label_button.clicked.connect(
+                    lambda : self.load_labels()
+                    )
+
+            self.label_options.save_button.clicked.connect(
+                    lambda : self.save_labels()
+                    )
+
+            self.label_options.show()
+        else:
+            print('label menu is already open!')
+
+    def load_labels(self):
+        labels = self.label_options.load_labels()
+        self.update_labels(labels)
+
+    def save_labels(self):
+        """
+        fnam = root/filename.h5/data/dataset
+        """
+        labels = self.label_options.save_labels(self.label_selection)
+        self.update_labels(labels)
+
+    def update_labels(self, labels=None):
+        if labels is None:
+            if self.current_slice not in self.label_selection:
+                self.label_selection.add(int(self.current_slice))
+                print(f'adding {self.current_slice} to labels: {self.label_selection}')
+            else:
+                self.label_selection.remove(int(self.current_slice))
+                print(f'removing {self.current_slice} from labels: {self.label_selection}')
+        else:
+            self.label_selection.update(labels)
+
+        self.update_border()
+
+    def select_all_labels_menu(self):
+        l = len(self.label_selection)
+        self.label_selection.update([int(d) for d in self.xmap])
+        print(f'adding {len(self.label_selection) - l} selections to labels')
+        self.update_border()
+
+    def update_border(self):
+        pass
+
+    def keyPressEvent(self, event):
+        if self.vline is not None:
+            self.vline.keyPressEvent(event)
+
+        key = keys_mapping[event.key()]
+
+        # label frame
+        if key == 'X':
+            self.update_labels()
+
+        # save / load labels
+        elif key == 'S':
+            self.add_labels_menu()
+
+        # select all labels
+        elif key == 'A':
+            self.select_all_labels_menu()
+
 
 class PlotWidget1D(PlotWidgetBase):
     def __init__(self, *args, **kwargs):
@@ -512,6 +707,12 @@ class PlotWidget2D(PlotWidgetBase):
         if data.dtype == bool:
             data = data.astype(np.uint8)
 
+        # Hack to Disable hist auto-scaling
+        if self.autoHistogramRange is False:
+            self.hist.disableAutoHistogramRange()
+        else:
+            self.hist.autoHistogramRange()
+
         self.img_item.setImage(
                 data,
                 autoRange=self.autoRange,
@@ -564,7 +765,7 @@ class PlotWidget3D(PlotWidget2D):
         l2.addWidget(self.slice_label)
 
         # Slider to select slice
-        self.vline = InfiniteSlider(Qt.Horizontal)
+        self.vline = InfiniteSlider(Qt.Horizontal, self)
         self.vline.setMinimum(0)
         self.vline.setMaximum(self.data.shape[0]-1)
         self.vline.valueChanged.connect(self._on_slider_change)
@@ -589,20 +790,31 @@ class PlotWidget3D(PlotWidget2D):
 
     def plot(self, data=None):
         if data is None:
-            slice_data = self.data[self.current_slice]
+            slice_data = self.data[self.current_slice].real
         else:
-            slice_data = data
+            slice_data = data.real
 
         if self.initial_slice is False:
             self.autoRange = False
             self.autoLevels = False
             self.autoHistogramRange = False
         else:
+            self.autoRange = True
+            self.autoLevels = True
+            self.autoHistogramRange = True
             self.initial_slice = False
+
 
         l = f"Slice: {self.current_slice:>0{len(str(self.data.shape[0]))}}"
         self.slice_label.setText(l)
 
         super().plot(slice_data, xmap=())
 
+        self.update_border()
+
+    def update_border(self):
+        if self.current_slice in self.label_selection:
+            self.img_item.setBorder('g')
+        else:
+            self.img_item.setBorder(None)
 

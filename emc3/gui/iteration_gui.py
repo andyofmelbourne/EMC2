@@ -1,4 +1,6 @@
 from pathlib import Path
+import numpy as np
+import h5py
 
 from .model_slices_widget import Model_slice_widget
 
@@ -9,6 +11,8 @@ from PyQt5.QtWidgets import (
 from .h5_viewer import H5_viewer
 from .emc_scat_widget import EMC_scatter_widget
 from .getters import DataGetter_h5, GeomGetterCXI_h5, GeomGetterSparseCXI_h5
+
+from .show_fit_widget import plugin
 
 class Iteration_gui(Model_slice_widget):
     def __init__(self, directory, parent=None):
@@ -58,8 +62,26 @@ class Iteration_gui(Model_slice_widget):
         # show selected frames on signal
         self.showFramesSignal.connect(self.show_frames)
 
-    def show_frames(self, frames):
+    def show_frames(self, l):
+        frames, model_d, r_d = l
+
         # hack: should include reference to cxi file in iteration info
         cxi = list(Path(self.directory).glob('*.cxi'))[0]
-        pw = self.plots_widget.open(cxi, 'entry_1/data_1/data', where='window')
+
+        # hack: if hit_sigma is present, sort frames
+        key = 'entry_1/instrument_1/detector_1/hit_sigma'
+        with h5py.File(cxi) as f:
+            if key in f:
+                hit_sigma = f[key][()][frames]
+                frames = frames[np.argsort(hit_sigma)[::-1]]
+
+        # plugin to show model fit to frame
+        # hack: need to get config file name somehow...
+        config_file = Path('config.pickle')
+        if config_file.is_file():
+            p = lambda x: plugin(x, config_file, model_d, r_d)
+        else:
+            p = None
+
+        pw = self.plots_widget.open(cxi, 'entry_1/data_1/data', where='window', plugin=p)
         pw.current_plot.update_xmap(frames)

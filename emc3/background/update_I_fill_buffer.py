@@ -333,17 +333,28 @@ def merge_I(c):
         f['data'] = I_n
         f['dq'] = c['model'].dq
 
-def fill_buffer(config, config_file):
+    print(f'{cid}: saved exiting merge')
+    sys.stdout.flush()
+
+
+def fill_buffer(config, config_file, cids=None):
     max_mem_gb = 4
     max_buf_size = max_mem_gb * 1024**3 / 4 / 2
 
     cmds = []
 
-    fnam_jobs = Path(f'class_fill_buffer_jobs.txt')
+    # get classes to process
+    if cids is None:
+        cids = list(range(len(config['classes'])))
+
+    cids_str = f'{cids[0]}-{cids[-1]}'
+    fnam_jobs = Path(f'class_fill_buffer_jobs_{cids_str}.txt')
     if fnam_jobs.is_file():
         fnam_jobs.unlink()
 
-    for ci, c in enumerate(config['classes']):
+    for ci in cids:
+        c = config['classes'][ci]
+
         if not c['update_model']:
             continue
 
@@ -380,7 +391,8 @@ def fill_buffer(config, config_file):
                     file.write(cmd)
                     device += 1
 
-    cmd = f'parallel --halt now,fail=1 --verbose --jobs 32 < class_fill_buffer_jobs.txt'
+
+    cmd = f'parallel --halt now,fail=1 --verbose --retries=3 --jobs 32 < {fnam_jobs}'
     print(cmd)
     p = subprocess.Popen(
         cmd,
@@ -395,11 +407,16 @@ def fill_buffer(config, config_file):
         raise ValueError('something went wrong with call')
 
     # now merge output
-    for ci, c in enumerate(config['classes']):
+    for ci in cids:
+        c = config['classes'][ci]
+
         if not c['update_model']:
             continue
 
         merge_I(c)
+
+    print(f'{cids_str}: fill buffer done exiting')
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     m_min, m_max, ci, device, config_file = sys.argv[1:]

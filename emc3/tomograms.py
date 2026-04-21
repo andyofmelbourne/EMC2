@@ -172,6 +172,7 @@ class Tomograms_cl():
             self.W_ri = np.empty((r_chunk_size, self.tomo.shape[1]),
                                  dtype=np.float32)
 
+        print(f'{self.tomo.C_i.shape=} {self.tomo.C_i.dtype=} {self.tomo.C_i.nbytes=}')
         mf = cl.mem_flags
         self.C_cl = cl.Buffer(self.context, mf.READ_ONLY |
                               mf.COPY_HOST_PTR, hostbuf=self.tomo.C_i)
@@ -262,8 +263,9 @@ class Tomograms_cl():
 
         if cpu:
             self.event.wait()
-            cl.enqueue_copy(self.queue, self.W_ri[:size], self.W_cl)
-            out = self.W_ri[:size].reshape((len(rs), len(pix)))
+            cl.enqueue_copy(self.queue, self.W_ri.ravel()[:size], self.W_cl)
+            print(f'{size=} {self.W_ri.shape=} {self.W_ri.size=}')
+            out = self.W_ri.ravel()[:size].reshape((len(rs), len(pix)))
         else:
             out = self.W_cl
 

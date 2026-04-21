@@ -1,5 +1,4 @@
 import sys
-import h5py
 import numpy as np
 from pathlib import Path
 
@@ -39,13 +38,9 @@ class H5_viewer(QWidget):
         super().__init__(parent)
         self.getters = getters
         self.fnam = fnam
-        self.fnams = None
-
-        # update file list
-        self.update_file_list()
 
         # Create widgets
-        self.h5_list_widget = H5_list_widget(self.fnams)
+        self.h5_list_widget = H5_list_widget(fnam)
 
         self.open_plots = []
         self.wins = []
@@ -84,32 +79,14 @@ class H5_viewer(QWidget):
         layout.addWidget(splitter)
 
         # Connect h5_list_widget signal directly to a handler
-        self.h5_list_widget.itemClickedPath.connect(self.on_item_path_clicked)
+        self.h5_list_widget.itemClicked.connect(self.on_item_path_clicked)
 
-    def update_file_list(self):
-        fnam = self.fnam
-
-        if Path(fnam).is_dir():
-            self.fnams = [str(f) for f in Path(fnam).glob('*.cxi')]
-            self.fnams += [str(f) for f in Path(fnam).glob('*.h5')]
-
-        elif Path(fnam).is_file():
-            self.fnams = [fnam]
-
-        else:
-            err = f'could not find file or files with \
-                    *.h5 / *.cxi extension: {fnam}'
-            raise ValueError(err)
-
-    def on_item_path_clicked(self, path_list):
-        # path = "/" + "/".join(path_list)
-        data = self.h5_list_widget.path_to_file_dataset(path_list)
-
+    def on_item_path_clicked(self, data):
         if data is None:
             return
 
-        fnam = data['fnam']
-        name = data['dataset']
+        fnam = data.fnam
+        name = data.dataset
 
         modifiers = QApplication.keyboardModifiers()
 
@@ -122,9 +99,9 @@ class H5_viewer(QWidget):
         else:
             where = 'main'
 
-        self.open(fnam, name, where=where)
+        self.open(fnam, name, data, where=where)
 
-    def open(self, fnam, name, where='main'):
+    def open(self, fnam, name, data=None, where='main', plugin=None):
         if where == 'window' or where == 'splitter':
             widget = PlotWidget(open_plots=self.open_plots)
         else:
@@ -132,7 +109,8 @@ class H5_viewer(QWidget):
 
         for g in self.getters:
             try:
-                data = g(fnam, name)
+                data2 = g(fnam, name)
+                data = data2
                 break
             except Exception as e:
                 print(e)
@@ -150,24 +128,20 @@ class H5_viewer(QWidget):
         elif where == 'splitter':
             self.vsplitter.addWidget(widget)
 
-        widget.plot(data, name=name)
+        widget.plot(data, name=name, plugin=plugin)
         return widget
 
     def refresh(self):
-        for plot in self.open_plots:
-            # only I know about this method
-            if plot.data is not None:
-                plot.data.refresh()
-            plot.refresh()
-
-        self.update_file_list()
-        self.h5_list_widget.refresh(self.fnams)
+        self.h5_list_widget.update()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # fnam = '/home/andyofmelbourne/Documents/2025/LCLS-CXI-1008449/data/r0087_radial_profiles.h5'
-    fnam = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits_no_mask.cxi'
+    if len(sys.argv) > 1:
+        fnam = sys.argv[1]
+    else:
+        # fnam = '/home/andyofmelbourne/Documents/2025/LCLS-CXI-1008449/data/r0087_radial_profiles.h5'
+        fnam = '/home/andyofmelbourne/Documents/2024/p7927/scratch/saved_hits/Ery_all_hits_no_mask.cxi'
 
     window = H5_viewer(fnam)
     window.setWindowTitle("HDF5 Tree + Plot (Signal Version)")

@@ -89,6 +89,7 @@ def write_h5(f, k, v, compression=True, chunks=None):
 def save_iteration_info(
     P_max_d,
     Q_d,
+    Q_old_d,
     class_max_d,
     local_rmax_d,
     occupancy_dc,
@@ -129,6 +130,13 @@ def save_iteration_info(
             )
 
             f.create_dataset(
+                'dQ',
+                shape=(1,),
+                maxshape=(None,),
+                dtype=np.float32
+            )
+
+            f.create_dataset(
                 'P_gini',
                 shape=(1,),
                 maxshape=(None,),
@@ -150,7 +158,7 @@ def save_iteration_info(
             )
     else:
         # resize
-        keys = ['beta', 'Q', 'P_gini', 'orientation_changes', 'class_changes']
+        keys = ['beta', 'Q', 'dQ', 'P_gini', 'orientation_changes', 'class_changes']
         with h5py.File(fnam, 'r+') as f:
             for key in keys:
                 f[key].resize(N+1, axis=0)
@@ -173,6 +181,10 @@ def save_iteration_info(
         f['iterations'][...] = N+1
         f['beta'][N] = beta
         f['Q'][N] = np.mean(Q_d)
+        if N > 0:
+            f['dQ'][N] = np.mean(Q_old_d - f[f'iteration_{N-1}/Q_d'][()])
+        else:
+            f['dQ'][N] = 0
         f['P_gini'][N] = np.mean(P_max_d)
 
         # write differences

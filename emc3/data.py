@@ -220,8 +220,9 @@ class SparseData():
         if not self.is_loaded:
             raise ValueError('need to load all frames before calling!')
 
-        if key == self.last_key:
-            return self.buffer
+        # key could be array, tuple, int, slice etc
+        # if key == self.last_key:
+        #     return self.buffer
 
         self.last_key = key
         self.buffer = self.csr[key].toarray()
@@ -359,12 +360,17 @@ class DataSparseCXI(RawDataGetterSparseCXI):
         if background:
             self.B_di = BackCXI(self, file=background_file)
 
+        self.background = background
+
     def save_to_file(self):
         """
         add pixel_size and xyz coords to file for viewing
         """
         super().save_to_file()
-        self.B_di.save_to_file()
+
+        if self.background:
+            self.B_di.save_to_file()
+
         if not self.is_loaded:
             raise ValueError('need to load all frames before saving!')
 
@@ -374,15 +380,21 @@ class DataSparseCXI(RawDataGetterSparseCXI):
 
     def load_data(self):
         super().load_data()
-        self.B_di.load_data()
+
+        if self.background:
+            self.B_di.load_data()
 
     def load_from_file(self):
         super().load_from_file()
-        self.B_di.load_from_file()
+
+        if self.background:
+            self.B_di.load_from_file()
 
     def unload(self):
         super().unload()
-        self.B_di.unload()
+
+        if self.background:
+            self.B_di.unload()
 
 
 class BackCXI():

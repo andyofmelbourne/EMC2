@@ -62,7 +62,22 @@ def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
     for r0, r1, dr in utils.chunker(r_chunk_size, R):
         # calculate tomograms
         W_ri = tomos_cl.calculate_tomogram(r0, r1, log=True, cpu=True)
+
+        # test
+        """
+        R0 = np.dot(L.K_di[:], W_ri.T) - L.K_di.data_sum[:, None] * np.log(L.wsums_r[r0:r1])[None, :]
+        print()
+        wsums_r = L.wsums_r
+        print(f'{np.min(W_ri)=} {np.max(W_ri)=} {np.mean(W_ri)=}')
+        print(f'{np.min(wsums_r[r0:r1])=} {np.max(wsums_r[r0:r1])=} {np.mean(wsums_r[r0:r1])=}')
+        print(f'{np.min(np.log(wsums_r[r0:r1]))=} {np.max(np.log(wsums_r[r0:r1]))=} {np.mean(np.log(wsums_r[r0:r1]))=}')
+        W_ri -= np.log(L.wsums_r[r0:r1])[:, None]
+        print(f'{np.min(W_ri)=} {np.max(W_ri)=} {np.mean(W_ri)=}')
+        R1 = np.dot(L.K_di[:], W_ri.T)
+        print(f'{np.linalg.norm(R0)=} {np.linalg.norm(R1)=} {np.linalg.norm(R0-R1)=}')
+        print()
         # print('tomo time:', time.time() - t0)
+        """
 
         for d0, d1, dr in utils.chunker(d_chunk_size, D):
             # get data
@@ -164,6 +179,10 @@ if __name__ == '__main__':
     config = pickle.load(open(config_fnam, 'rb'))
     wd = config['working_directory']
 
+    # load fluence
+    with h5py.File(config['fluence_file']) as f:
+        w_d = f['w_d'][()]
+
     dot_time = 0
     for class_id in class_ids:
         c = config['classes'][class_id]
@@ -174,6 +193,9 @@ if __name__ == '__main__':
         # load model
         with h5py.File(c['model_file']) as f:
             c['model'].data = f['data'][()]
+
+        # set fluence
+        c['fluence'] = w_d
 
         # load data
         c['P_data'].load_from_file()

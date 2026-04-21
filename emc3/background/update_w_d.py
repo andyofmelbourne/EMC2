@@ -203,7 +203,7 @@ def calculate_wsums_cl(
     return wsums_r
 
 
-def w_update(config, config_file, update_b=False, p_per_device=2):
+def w_update(config, config_file, update_b=False, p_per_device=16):
     """
     - calculate wsums
     - calculate w_d split over frames
@@ -212,33 +212,55 @@ def w_update(config, config_file, update_b=False, p_per_device=2):
         print('update_fluence is False skipping w_d update')
         return
 
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    name = MPI.Get_processor_name()
+
+    cids = list(range(len(config['classes'])))
+    my_classes = cids[rank::size]
+
     cl = utils_cl.opencl_init()
 
-    for c in config['classes']:
+    for ci in my_classes:
+        c = config['classes'][ci]
         wsums_r = calculate_wsums_cl(**c, cl=cl)
 
         # save
         with h5py.File(c['wsums_file'], 'w') as f:
             f['wsums_r'] = wsums_r
 
+    comm.Barrier()
+
     # chunk over frames
     # -----------------
     devices = utils_cl.get_devices(device_type='gpu')
 
     # number parallel processes
-    nproc = p_per_device * len(devices)
+    nproc = p_per_device
 
-    # str = '0-10000 10000-20000 20000-20323'
+    # first split by rank then by nproc
+    # ---------------------------------
     D = config['classes'][0]['data'].shape[0]
-    d0_d1_str = []
+    d0_d1_rank = []
     d0_d1 = []
-    for s in np.array_split(np.arange(0, D), nproc):
-        d0, d1 = s[0], s[-1]+1
-        d0_d1.append([d0, d1])
-        d0_d1_str.append('-'.join([str(d0), str(d1)]))
-    d0_d1_str = ' '.join(d0_d1_str)
+    for r, s in enumerate(np.array_split(np.arange(0, D), size)):
+        d00, d11 = s[0], s[-1]+1
+        d0_d1_rank.append([d00, d11])
 
-    cmd = f"time parallel --halt now,fail=1 python -m emc3.background.update_w_d {config_file} {{}} {{%}} {update_b} ::: {d0_d1_str}"
+        # str = '0-10000 10000-20000 20000-20323'
+        d0_d1_str = []
+        for s in np.array_split(np.arange(d00, d11), nproc):
+            d0, d1 = s[0], s[-1]+1
+            d0_d1.append([d0, d1])
+            d0_d1_str.append('-'.join([str(d0), str(d1)]))
+        d0_d1_str = ' '.join(d0_d1_str)
+
+        if r == rank:
+            my_d0_d1_str = d0_d1_str
+
+    cmd = f"time parallel --halt now,fail=1 python -m emc3.background.update_w_d {config_file} {{}} {{%}} {update_b} ::: {my_d0_d1_str}"
     print(cmd)
     p = subprocess.Popen(
         cmd,
@@ -252,25 +274,30 @@ def w_update(config, config_file, update_b=False, p_per_device=2):
     if p.returncode != 0:
         raise ValueError('something went wrong with call')
 
+    comm.Barrier()
+
     # merge
-    w_d = np.zeros(config['classes'][0]['data'].shape[0], dtype=float)
-    b_d = np.zeros(config['classes'][0]['data'].shape[0], dtype=float)
-    for d0, d1 in d0_d1:
-        fnam = Path(f'fluence_chunk_{d0}_{d1}.h5')
-        with h5py.File(str(fnam)) as f:
-            w_d[d0:d1] = f['w_d'][()]
+    if rank == 0:
+        w_d = np.zeros(config['classes'][0]['data'].shape[0], dtype=float)
+        b_d = np.zeros(config['classes'][0]['data'].shape[0], dtype=float)
+        for d0, d1 in d0_d1:
+            fnam = Path(f'fluence_chunk_{d0}_{d1}.h5')
+            with h5py.File(str(fnam)) as f:
+                w_d[d0:d1] = f['w_d'][()]
+                if update_b:
+                    b_d[d0:d1] = f['b_d'][()]
+
+            fnam.unlink()
+
+        w_d = np.clip(w_d, 1e-8, None)
+        b_d = np.clip(b_d, 1e-8, None)
+
+        with h5py.File(config['fluence_file'], 'w') as f:
+            f['w_d'] = w_d
             if update_b:
-                b_d[d0:d1] = f['b_d'][()]
+                f['b_d'] = b_d
 
-        fnam.unlink()
-
-    w_d = np.clip(w_d, 1e-8, None)
-    b_d = np.clip(b_d, 1e-8, None)
-
-    with h5py.File(config['fluence_file'], 'w') as f:
-        f['w_d'] = w_d
-        if update_b:
-            f['b_d'] = b_d
+    comm.Barrier()
 
     # hack this into background getter
     #c = config['classes'][0]

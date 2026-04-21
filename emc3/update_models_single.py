@@ -148,7 +148,7 @@ class Update_model_class():
         elif op == ('Poisson', 'fluence'):
             self._calc_D = self._calc_CwP
 
-        elif op == ('Poisson_fluence_free', 'basic'):
+        elif op == ('fluence_free', 'basic'):
             self._calc_D = self._calc_CkP
 
         else:
@@ -330,6 +330,11 @@ def finish(model, class_id, filter=None):
         D_n.reshape(model.shape),
     )
 
+    # test: output N and D
+    with h5py.File(f'class_model_{class_id}_ND.h5', 'w') as f:
+        f['N_n'] = N_n
+        f['D_n'] = D_n
+
     # I = N / D
 
     m = D_n == 0
@@ -400,32 +405,23 @@ def update_model_subprocess(config_file, config, p_per_device=2, update_fluence=
 
             assert(np.all(c['wsums_r']>0))
 
+            fnam = c['probability_matrix_file']
+            with h5py.File(fnam) as f:
+                P_dr = f['P_dr'][()]
+
+            Pw = np.dot(P_dr, c['wsums_r'])
+            del P_dr
+
             # write to file
             with h5py.File(c['wsums_file'], 'w') as f:
                 f['wsums_r'] = c['wsums_r']
-
-        print(f'tomo time:', time() - t0)
-
-        # calculate fluence if needed
-        # ---------------------------
-        t0 = time()
-        # load probability matrix
-        for c in config['classes']:
-            fnam = c['probability_matrix_file']
-            with h5py.File(fnam) as f:
-                c['P_dr'] = f['P_dr'][()]
+                f['P_dot_wsums'] = Pw
 
         w_d = calculate_fluence(config)
 
         # write to file
         with h5py.File(config['fluence_file'], 'w') as f:
             f['w_d'] = w_d
-        print(f'fluence time:', time() - t0)
-
-    # delete P_dr to save space
-    for c in config['classes']:
-        del c['P_dr']
-        c['P_dr'] = None
 
     if not c['update_model']:
         return None

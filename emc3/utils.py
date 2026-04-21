@@ -255,7 +255,7 @@ class Geom_corr_xyz_masked():
 
     def apply(self, ar):
         if len(ar.shape) == 1:
-            ar2 = np.zeros(self.frame_shape, dtype=self.dtype)
+            ar2 = np.zeros(self.geom.frame_shape, dtype=self.geom.dtype)
             ar2[self.mask] = ar
         elif len(ar.shape) == 2:
             ar2 = np.zeros((ar.shape[0],) + self.geom.frame_shape, dtype=self.geom.dtype)

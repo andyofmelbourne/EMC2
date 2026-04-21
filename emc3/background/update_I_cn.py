@@ -77,6 +77,7 @@ from tqdm import tqdm
 import sys
 import subprocess
 import pickle
+from time import time, sleep
 
 # this should be chunked over r, not d
 def _calculate_c_n(w_d, P_dr, M_sri, C_i, N, queue, context):
@@ -161,12 +162,16 @@ def _calculate_c_n(w_d, P_dr, M_sri, C_i, N, queue, context):
     return cc_n
 
 
-def calculate_c_n(config, config_file):
+def calculate_c_n(config, config_file, cids=None):
     # classes to process
-    cids = []
-    for ci, c in enumerate(config['classes']):
-        if c['update_model']:
-            cids.append(ci)
+    if cids is None:
+        cids = list(range(len(config['classes'])))
+
+    for ci in cids:
+        c = config['classes'][ci]
+
+        if not c['update_model']:
+            cids.remove(ci)
 
     cids_str = ' '.join([str(i) for i in cids])
 
@@ -206,6 +211,32 @@ if __name__ == '__main__':
     # load prob
     with h5py.File(c['probability_matrix_file']) as f:
         c['P_dr'] = f['P_dr'][()]
+
+    # check if this is done
+    while True:
+        b = False
+        c = config['classes'][cid]
+        with h5py.File(c['probability_matrix_file']) as f:
+            P_dr = f['P_dr'][()]
+
+        Psum = np.sum(P_dr)
+
+        print(f'update_I_cn.py: sum P_dr == {Psum} for class {cid} after barrier')
+        sys.stdout.flush()
+
+        if Psum==0.:
+            print(f'update_I_cn.py: warning P_dr == 0 for class {cid} {c["probability_matrix_file"]=} after barrier, waiting')
+            sys.stdout.flush()
+            sleep(1)
+        else:
+            b = True
+
+        if b:
+            break
+
+    if np.allclose(c['P_dr'], 0):
+        print(f'warning all P_dr == 0 for class {cid}')
+        sys.stdout.flush()
 
     C_i = np.ascontiguousarray(c['data'].C_i.astype(np.float32))
 

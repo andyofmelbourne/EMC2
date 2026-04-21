@@ -10,14 +10,14 @@ class Likelihood():
         background: w_d W_ri + B_di
 
     likelihood (logR_dr):
-        Poisson:              sum_i K_di log(F_dri) - F_dri
-        Poisson_fluence_free: sum_i K_di log(F_dri) - K_d log(F_dr)
+        Poisson:      sum_i K_di log(F_dri) - F_dri
+        fluence_free: sum_i K_di log(F_dri) - K_d log(F_dr)
 
     where K_d  = sum_i K_di
           F_dr = sum_i F_dri
 
     No background:
-        likelihood = 'Poisson_fluence_free'
+        likelihood = 'fluence_free'
         frame_model = 'basic'
             logR_dr = \sum_i K_di logW_ri - K_d log(sum_i W_ri)
 
@@ -34,7 +34,7 @@ class Likelihood():
         frame_model = 'background'
             logR_dr = \sum_i K_di logF_dri - F_dr
 
-        likelihood = 'Poisson_fluence_free'
+        likelihood = 'fluence_free'
         frame_model = 'background'
             logR_dr = \sum_i K_di logF_dri - K_d logF_dr
 
@@ -47,7 +47,7 @@ class Likelihood():
             tomo,
             K_di,
             frame_model='basic',
-            likelihood='Poisson_fluence_free',
+            likelihood='fluence_free',
             sparse_K=False,
             gpu=False,
             **kwargs
@@ -87,19 +87,25 @@ class Likelihood():
         d0, d1 = drange
         r0, r1 = rrange
 
+        print(f'******************************************************hello*************************************************')
+        print(f'{self.frame_model=}')
+        print(f'{self.likelihood=}')
+
         # offset
         if (
                 self.frame_model == 'basic'
-                and self.likelihood == 'Poisson_fluence_free'
+                and self.likelihood == 'fluence_free'
                 ):
+            print(f'{logR_dr.max()=}')
             logR_dr -= self.K_di.data_sum[d0:d1, None] \
                     * np.log(self.wsums_r[r0:r1])[None, :]
+            print(f'{logR_dr.max()=}')
 
         elif (
                 self.frame_model == 'basic'
                 and self.likelihood == 'Poisson'
                 ):
-            logR_dr -= np.log(self.wsums_r[r0:r1])
+            logR_dr -= self.wsums_r[r0:r1]
 
         elif (
                 self.frame_model == 'fluence'
@@ -107,6 +113,9 @@ class Likelihood():
                 ):
             logR_dr -= self.tomo.fluence[d0:d1, None] \
                     * self.wsums_r[None, r0:r1]
+
+        else:
+            raise ValueError(f'{self.frame_model=} and {self.likelihood=} are not supported')
 
 
 def calculate_logR(config):

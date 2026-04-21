@@ -51,15 +51,50 @@ class Model():
         N = self.shape[0]
         I = blob(N, self.dq)
         I *= (np.random.random(I.shape) + 0.1)
-        s = self.ndim * (slice(None),)
-        self.data = I[s]
+        if self.ndim == 3:
+            self.data = I
+        elif self.ndim == 2:
+            self.data = I[:, self.i0, :]
+        else:
+            raise ValueError(f'{self.ndim} not supported')
 
     def init_blob_multi(self):
         N = self.shape[0]
         I = blob_multi(N, self.dq)
         I *= (np.random.random(I.shape) + 0.1)
-        s = self.ndim * (slice(None),)
-        self.data = I[s]
+        if self.ndim == 3:
+            self.data = I
+        elif self.ndim == 2:
+            self.data = I[:, self.i0, :]
+        else:
+            raise ValueError(f'{self.ndim} not supported')
+
+    def init_cube(self, n=4):
+        """
+        ijk = np.indices(self.shape)
+        r = np.sum([np.abs((i-self.i0))**n for i in ijk], axis=0)**(1/n)
+        sig = self.shape[0]/4
+        I = np.exp(-r / (2 * sig**2))
+        I *= (np.random.random(I.shape) + 0.1)
+        self.data = I
+        """
+
+        i, j, k = np.indices(self.shape)
+        i -= self.i0
+        j -= self.i0
+        k -= self.i0
+        r = np.array([i, j, k]).T
+        I = np.zeros(self.shape, dtype=float)
+        x = 1
+        for y in [-1, 1]:
+            for z in [-1, 1]:
+                a = np.array([x, y, z], dtype=float)
+                d = np.linalg.norm(r - np.sum(r * a, axis=-1)[:, :, :, None] * a[None, None, None, :], axis=-1)
+                I += 1/(d+1)
+
+        I *= (np.random.random(I.shape) + 0.1)
+        self.data = I
+
 
 def blob(N, dq):
     sigma_z = 8 * 5.58661e+06
@@ -72,8 +107,8 @@ def blob(N, dq):
     return I
 
 def blob_multi(N, dq):
-    sigma_z = 3 * 5.58661e+06
-    sigma_x = 4 * 5.58661e+06
+    sigma_z = 4 * 5.58661e+06
+    sigma_x = 2 * 5.58661e+06
     i = dq * np.fft.fftshift(np.fft.fftfreq(N, 1/N))
     x = i[:, None, None]
     y = i[None, :, None]
@@ -126,7 +161,7 @@ def update_I_class(c):
         D_ri = C_i[None, :] * np.dot(w_d, P_dr)[:, None]
 
     elif (
-        likelihood == 'Poisson_fluence_free'
+        likelihood == 'fluence_free'
         and frame_model == 'basic'
     ):
         N_ri *= wsums_r[:, None]

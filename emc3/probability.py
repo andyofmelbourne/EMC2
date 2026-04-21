@@ -9,6 +9,8 @@ from .utils_cl import opencl_init_cpu
 from .utils import chunker
 from . import input_output
 
+from scipy.ndimage import gaussian_filter1d
+
 import warnings
 # warnings.filterwarnings("ignore", category=cl.CompilerWarning)
 os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
@@ -23,6 +25,7 @@ cl_code = """
         global double *Pmax_d,
         global double *occupancy_dc,
         global double *Q_d,
+        global double *Q_old_d,
         const double beta,
         const double P_thresh,
         const int d_offset,
@@ -35,6 +38,12 @@ cl_code = """
         int r, rmax;
 
         double logR_max = -DBL_MAX;
+
+        // calculate P . logR using old P-values
+        // Q = sum_r P_dr logR_dr
+        for (r=0; r<R; r++) {{
+            Q_old_d[d] += P_dr[d * R + r] * logR_dr[d * R + r];
+        }}
 
         // find argmax and max of logR_dr
         for (r=0; r<R; r++) {{
@@ -114,6 +123,7 @@ class Probability():
         self.Pmax_d = np.zeros(D, dtype=float)
         self.occupancy_dc = np.zeros((D, self.models), dtype=float)
         self.Q_d = np.zeros(D, dtype=float)
+        self.Q_old_d = np.zeros(D, dtype=float)
         self.class_max_d = np.empty((D,), dtype=np.int32)
         self.local_r = np.empty((R,), dtype=np.int32)
         self.local_rmax_d = np.empty((D,), dtype=np.int32)
@@ -131,7 +141,7 @@ class Probability():
         self.cl_cpu_code = cl.Program(self.context, cl_code).build()
         self.normalise_P_dr = cl.Kernel(self.cl_cpu_code, "normalise_P_dr")
 
-    def calculate(self, logR_dr, d00, d11):
+    def calculate(self, P_dr, logR_dr, d00, d11):
         D, R = logR_dr.shape
 
         # per chunk arrays
@@ -140,6 +150,7 @@ class Probability():
         Pmax_d = np.zeros(D, dtype=float)
         occupancy_dc = np.zeros((D, self.models), dtype=float)
         Q_d = np.zeros(D, dtype=float)
+        Q_old_d = np.zeros(D, dtype=float)
 
         # d_chunk_size = max(1, int(os.cpu_count()/2))
         d_chunk_size = max(1, int(os.cpu_count()/2))
@@ -151,7 +162,8 @@ class Probability():
             disable=True
         )
 
-        P_dr = np.empty_like(logR_dr)
+        if P_dr is None:
+            P_dr = np.zeros_like(logR_dr)
 
         assert (self.class_r.shape == (R,))
         assert (logR_dr.dtype == np.float64)
@@ -169,6 +181,7 @@ class Probability():
                 cl.SVM(Pmax_d),
                 cl.SVM(occupancy_dc),
                 cl.SVM(Q_d),
+                cl.SVM(Q_old_d),
                 self.beta,
                 self.P_thresh,
                 np.int32(d0),
@@ -190,6 +203,7 @@ class Probability():
         self.Pmax_d[d00:d11] = Pmax_d
         self.occupancy_dc[d00:d11] = occupancy_dc
         self.Q_d[d00:d11] = Q_d
+        self.Q_old_d[d00:d11] = Q_old_d
 
         return P_dr
 
@@ -203,14 +217,15 @@ class Probability():
                     if 'beta' not in f:
                         f['beta'] = self.beta
             else:
-                logger.info('update_probability is False '
-                            f'skipping update for class {c}')
+                print('update_probability is False '
+                     f'skipping update for class {c}')
             index = r1
 
     def save_iteration(self, working_directory):
         input_output.save_iteration_info(
             self.Pmax_d,
             self.Q_d,
+            self.Q_old_d,
             self.class_max_d,
             self.local_rmax_d,
             self.occupancy_dc,
@@ -218,6 +233,57 @@ class Probability():
             working_directory,
             self.beta
         )
+
+def continuity(P_dr, config):
+    """test: smooth P_dr across classes
+
+    only works if each class has the same number of rotations
+
+    config['continuity_groups'] = [
+        {
+            'classes': [1,2,3],
+            'sigma': 0.7,
+        },
+        ...
+    ]
+    """
+    if 'continuity_groups' not in config:
+        return
+
+    if not config['continuity_groups']:
+        return
+
+    # get P_dcr for each continuity group
+    rs_c = np.array([c['r_offset'] for c in config['classes']] + [config['R'],])
+    Rs_c = np.diff(rs_c)
+
+    for group in config['continuity_groups']:
+        cs = group['classes']
+        sigma = group['sigma']
+        Rg = Rs_c[cs][0]
+
+        # make sure rotation sampling is the same for all classes
+        assert(np.all(Rs_c[cs] == Rg))
+
+        # fill P_dcr matrix
+        P_dcr = np.empty((P_dr.shape[0], len(cs), Rs_c[0]), dtype=float)
+        for i, ci in enumerate(cs):
+            r0 = rs_c[ci]
+            r1 = r0 + Rg
+            P_dcr[:, i, :] = P_dr[:, r0: r1]
+
+        # smooth along class axis P_dcr
+        P_dcr = gaussian_filter1d(P_dcr, sigma, mode='reflect', axis=1)
+
+        # fill P_dr
+        for i, ci in enumerate(cs):
+            r0 = rs_c[ci]
+            r1 = r0 + Rg
+            P_dr[:, r0: r1] = P_dcr[:, i, :]
+
+    # P_dcr = P_dr.reshape((dd, len(config['classes']), -1))
+    # P_dcr = gaussian_filter1d(P_dcr, 0.7, mode='reflect', axis=1)
+    # P_dr[:] = P_dcr.reshape((dd, -1))
 
 
 def calculate_P(config, beta):
@@ -229,6 +295,7 @@ def calculate_P(config, beta):
 
     class_r = np.empty(R)
     logR_dr = np.empty((D, R))
+    P_dr = np.zeros((D, R))
     update_probability_c = np.empty(len(config['classes']))
 
     P_thresh = config['classes'][0]['P_thresh']
@@ -247,8 +314,19 @@ def calculate_P(config, beta):
 
         update_probability_c[ci] = c['update_probability']
 
-        # initialise probability files
-        if c['update_probability']:
+        # load probability matrix for classes that
+        # don't have update_probability = True
+        # so we can write to iteration info and use continuity
+        fnam = c['probability_matrix_file']
+        p_init = True
+        if Path(fnam).is_file():
+            with h5py.File(fnam) as f:
+                if f['P_dr'].shape == (D, R):
+                    P_dr[:, r0:r0+R_c] = f['P_dr'][()]
+                    p_init = False
+
+        # initialise probability files if needed
+        if c['update_probability'] and p_init:
             with h5py.File(c['probability_matrix_file'], 'w') as f:
                 f.create_dataset('P_dr', shape=(D, R), dtype=float)
 
@@ -264,7 +342,24 @@ def calculate_P(config, beta):
     d_chunk_size = min(d_chunk_size, D)
 
     for d0, d1, dd in chunker(d_chunk_size, D):
-        P_dr = prob.calculate(logR_dr[d0:d1], d0, d1)
+        # in-place operation
+        P_dr_chunk = P_dr[d0: d1]
+        prob.calculate(P_dr_chunk, logR_dr[d0:d1], d0, d1)
+
+        continuity(P_dr_chunk, config)
+
+        # test threshold
+        key = 'P_thresh_frames'
+        if key in config and config[key]:
+            # at most f r's per frame
+            f = config[key]
+            p = (1-f/R)*100
+            thresh_d = np.percentile(P_dr_chunk, p, axis=1)
+            m = P_dr_chunk > thresh_d[:, None]
+            P_dr_chunk *= m
+
+        # renormalise
+        P_dr_chunk /= np.sum(P_dr_chunk, axis=1)[:, None]
 
         # save in class files
         prob.save_P_dr(fnams, update_probability_c, d0, d1)

@@ -334,11 +334,17 @@ class Symmetry():
             P2x = i * N**2 + jm * N + km
             P2y = im * N**2 + j * N + km
 
+            P4z = jm * N**2 + i * N + k
+            P4x = i * N**2 + km * N + j
+            P4y = k * N**2 + j * N + im
+
         elif len(shape) == 2:
             self.i = i = self.n // shape[1]
             self.j = j = self.n  % shape[1]
             im = (-i + 2 * self.i0) % N
             jm = (-j + 2 * self.i0) % N
+
+            P4z = jm * N + i
 
             I = self.n.copy()
             inv = im * N + jm
@@ -346,7 +352,7 @@ class Symmetry():
 
         # only cubes for now
         assert(np.allclose(shape, self.N))
-        assert(symmetry in ['P1', 'C6', 'D6', 'inversion'])
+        assert(symmetry in ['P1', 'C6', 'D6', 'octahedral', 'inversion'])
         assert(len(shape) in [2, 3])
 
         sym_ops = [I]
@@ -354,16 +360,27 @@ class Symmetry():
             sym_ops.append(inv)
 
         elif symmetry == 'D6':
-            sym_ops.append(P2z)
-            sym_ops.append(P2x)
+            if len(shape) == 3:
+                sym_ops.append(P2z)
+                sym_ops.append(P2x)
+
+            sym_ops.append(inv)
+
+        elif symmetry == 'octahedral':
+            # many solutions, this seems to do the trick
+            # ops = [p4x, p4y, p4z, p2z, p2x, inv]
+            if len(shape) == 3:
+                sym_ops.append(P4x)
+                sym_ops.append(P4y)
+                sym_ops.append(P4z)
+                sym_ops.append(P2z)
+                sym_ops.append(P2x)
+
             sym_ops.append(inv)
 
         elif symmetry == 'C6':
             sym_ops.append(P2z)
             sym_ops.append(inv)
-
-        elif symmetry == 'P1':
-            sym_ops.append(I)
 
         self.sym_ops = sym_ops
 
@@ -510,7 +527,7 @@ def apply_symmetry(ar, symmetry, i0):
 
 def get_non_voxel_operators(dimensions, symmetry):
 
-    if symmetry == 'P1' or symmetry == 'inversion':
+    if symmetry in ['P1', 'inversion', 'octahedral']:
         if dimensions == 2 :
             return np.array([[[1, 0], [0, 1]]])
         elif dimensions == 3:
@@ -519,15 +536,17 @@ def get_non_voxel_operators(dimensions, symmetry):
             raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
 
     elif symmetry == 'D6' or symmetry == 'C6':
+        # 3 x pi / 3 rotations about z-axis
+        #coord.x = x * c - y * s;
+        #coord.y = x * s + y * c;
+        c = 0.5;
+        s = 0.8660254037844386;
+        Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        P1 = np.array([[1, 0, 0],  [0, 1, 0], [0, 0, 1]])
         if dimensions == 3:
-            # 3 x pi / 3 rotations about z-axis
-            #coord.x = x * c - y * s;
-            #coord.y = x * s + y * c;
-            c = 0.5;
-            s = 0.8660254037844386;
-            Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
-            P1 = np.array([[1, 0, 0],  [0, 1, 0], [0, 0, 1]])
             return np.array([P1, Rz, Rz.dot(Rz)])
+        elif dimensions == 2:
+            return np.array([P1, Rz, Rz.dot(Rz)])[:, :2, :2]
         else :
             raise ValueError(f'dimension {dimensions} not supported for symmetry {symmetry}')
     """

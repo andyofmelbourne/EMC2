@@ -10,7 +10,6 @@ import sys
 import pyqtgraph as pg
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import Qt
 
 from .cxi_gui import CXI_viewer
 from .mask_gui import Mask_maker
@@ -20,8 +19,10 @@ from .ssh_widget import SSHWidget
 
 def main(directory):
     app = QApplication(sys.argv)
+
     # Enable native menu bar
-    app.setAttribute(Qt.AA_DontUseNativeMenuBar, False)  # Now Qt is defined
+    # doesn't work
+    # app.setAttribute(Qt.AA_DontUseNativeMenuBar, False)  # Now Qt is defined
 
     cxi_viewer = lambda : CXI_viewer(directory)
     mask_maker = lambda : Mask_maker(directory)

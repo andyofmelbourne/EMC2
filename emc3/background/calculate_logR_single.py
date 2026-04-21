@@ -19,7 +19,7 @@ from ..likelihood import Likelihood
 from ..update_models import gpu_dot
 from ..calculations import *
 from ..data import BackCXI
-from .frames import Frames, Frames_cl, Calc_logR
+from .frames import Frames, Frames_cl, Calc_logR, Calc_logR_back_fluence_free
 
 
 def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_size=256):
@@ -58,6 +58,7 @@ def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_si
             # calculate dot product
             # logR_dr = sum_i K_di F_dri - F_dr
             # F_dr = w_d wsums_r + B_d
+            # we don't need B_d term (normalised away)
             t0 = time.time()
             logR = np.sum(K_chunk[:, None, :] * F_dri, axis=-1)
             logR -= w_d[d0:d1, None] * wsums_r[None, r00:r11] + frames.B_di.data_sum[d0:d1, None]
@@ -68,10 +69,12 @@ def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_si
 
     return logR_dr, t
 
-def calculate_logR_class_0_cpu(K_di, frames, cl, cl_cpu, r0, r1, d_chunk_size=1024, r_chunk_size=1024):
+
+def calculate_logR_class_0_cpu(K_di, frames, cl, cl_cpu, r0, r1, d_chunk_size=1024, r_chunk_size=1024, fluence_free=False):
     """
     all in memory cpu + opencl process
     """
+    t0 = time.time()
     D, R0, I = frames.shape
 
     R = r1-r0
@@ -81,35 +84,40 @@ def calculate_logR_class_0_cpu(K_di, frames, cl, cl_cpu, r0, r1, d_chunk_size=10
 
     # calculate wsums_r
     tomos_cl = Tomograms_cl(frames.tomo, cl['context'], cl['queue'])
+    print(f'\n\n{r_chunk_size=}\n\n')
     tomos_cl.load_buffers(r_chunk_size)
 
-    calc_logR = Calc_logR(frames, cl_cpu['context'], cl_cpu['queue'])
+    if fluence_free:
+        calc_logR = Calc_logR_back_fluence_free(frames, cl_cpu['context'], cl_cpu['queue'])
+    else:
+        calc_logR = Calc_logR(frames, cl_cpu['context'], cl_cpu['queue'])
+
     calc_logR.load_logR_buffers(r_chunk_size, d_chunk_size, K_di.shape[1])
 
     logR_dr = np.zeros((D, R), dtype=np.float32)
     w_d = frames.w_d
 
-    t = 0
     for r00, r11, dr in tqdm(utils.chunker(r_chunk_size, R)):
         W_ri = tomos_cl.calculate_tomogram(r0+r00, r0+r11, log=False, cpu=True)
+
+        wsums_r = np.sum(W_ri, axis=-1)
 
         for d0, d1, dd in utils.chunker(d_chunk_size, D):
             # get data
             K_chunk = K_di[d0:d1]
 
-            logR = calc_logR.calculate_logR(d0, d1, dr, W_ri, K_chunk)
-
-            wsums_r = np.sum(W_ri, axis=-1)
-
-            # calculate dot product
-            # logR_dr = sum_i K_di F_dri - F_dr
-            # F_dr = w_d wsums_r + B_d
-            t0 = time.time()
-            logR -= w_d[d0:d1, None] * wsums_r[None, :] + frames.B_di.data_sum[d0:d1, None]
+            if fluence_free:
+                logR = calc_logR.calculate_logR(d0, d1, dr, W_ri, K_chunk, K_di.data_sum[d0: d1], wsums_r)
+            else:
+                print(f'{D=} {d_chunk_size=}')
+                logR = calc_logR.calculate_logR(d0, d1, dr, W_ri, K_chunk)
+                # logR_dr = sum_i K_di log(F_dri) - F_dr
+                # F_dr = w_d wsums_r + B_d
+                logR -= w_d[d0:d1, None] * wsums_r[None, :] #+ frames.B_di.data_sum[d0:d1, None]
 
             logR_dr[d0:d1, r00:r11] = logR
 
-            t += time.time() - t0
+    t = time.time() - t0
 
     return logR_dr, t
 
@@ -143,11 +151,14 @@ def calculate_logR_class_0_c(c, cl, cl_cpu, r0=None, r1=None):
             c['fluence'])
 
     frames = Frames(tomos, w_d, c['P_data'].B_di)
+    print(f'{frames.shape=}')
 
-    return calculate_logR_class_0_cpu(c['P_data'], frames, cl, cl_cpu, r0, r1)
+    fluence_free = (c['likelihood'] == 'fluence_free')
+
+    return calculate_logR_class_0_cpu(c['P_data'], frames, cl, cl_cpu, r0, r1, fluence_free=fluence_free)
 
 
-def calculate_logR_subprocess_2D(config_file, config, p_per_device=16):
+def calculate_logR_subprocess_2D(config_file, config, p_per_device=16, cids=None):
     """
     calculate logR in a separate process for each class
     write logR to file, return file names
@@ -157,12 +168,18 @@ def calculate_logR_subprocess_2D(config_file, config, p_per_device=16):
     devices = utils_cl.get_devices(device_type='gpu')
 
     # number parallel processes
-    nproc = p_per_device * len(devices)
+    nproc = p_per_device
+
+    # get classes to process
+    if cids is None:
+        cids = list(range(len(config['classes'])))
 
     # get classes and R's for each class
     cis = []
     r0_r1s = []
-    for ci, c in enumerate(config['classes']):
+    for ci in cids:
+        c = config['classes'][ci]
+
         class_id = c['class_id']
 
         R = c['mapper'].shape[1]
@@ -175,7 +192,8 @@ def calculate_logR_subprocess_2D(config_file, config, p_per_device=16):
         r0_r1s.append(f'0-{R}')
 
     # write to file
-    fnam_jobs = Path(f'class_calculate_logR.txt')
+    cis_str = f'{cis[0]}-{cis[-1]}'
+    fnam_jobs = Path(f'class_calculate_logR_{cis_str}.txt')
     if fnam_jobs.is_file():
         fnam_jobs.unlink()
 
@@ -187,7 +205,7 @@ def calculate_logR_subprocess_2D(config_file, config, p_per_device=16):
             file.write(cmd)
             device += 1
 
-    cmd = f'parallel --halt now,fail=1 --verbose --jobs {nproc} < {str(fnam_jobs)}'
+    cmd = f'parallel --halt now,fail=1 --delay 2 --verbose --jobs {nproc} < {str(fnam_jobs)}'
     print(cmd)
     p = subprocess.Popen(
         cmd,
@@ -201,7 +219,12 @@ def calculate_logR_subprocess_2D(config_file, config, p_per_device=16):
     if p.returncode != 0:
         raise ValueError('something went wrong with call')
 
-    for ci, c in enumerate(config['classes']):
+    for ci in cis:
+        c = config['classes'][ci]
+
+        R = c['mapper'].shape[1]
+        D = c['P_data'].shape[0]
+
         # gather chunks
         # load chunks
         fnams = Path('./').glob(f'class_logR_chunk_{ci}_*.h5')
@@ -283,7 +306,7 @@ def calculate_logR_subprocess(config_file, config, p_per_device=2):
 
                 # delete
                 print(f'deleting {fnam=}')
-                # fnam.unlink()
+                fnam.unlink()
 
     return True
 
@@ -305,7 +328,6 @@ if __name__ == '__main__':
     device = int(sys.argv[4])
 
     config = pickle.load(open(config_fnam, 'rb'))
-    wd = config['working_directory']
 
     c = config['classes'][ci]
     class_id = c['class_id']

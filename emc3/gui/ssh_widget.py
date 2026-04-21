@@ -217,7 +217,7 @@ class SSHWidget(QWidget):
         opts = config['ssh']
         opts.update(config['slurm'])
         # add command
-        opts['command'] += f'\npython {self.run_fnam}'
+        opts['command'] += f'\nmpirun -n $SLURM_NTASKS python {self.run_fnam}'
         self.ssh = SSH_SLURM_emc(**opts)
         self.opts = opts
 

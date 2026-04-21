@@ -15,7 +15,7 @@ class Detector():
     mask: array_like
     """
 
-    def __init__(self, xyz, wavelength, polarisation, mask, pixel_area):
+    def __init__(self, xyz, wavelength, polarisation, mask, pixel_area, scale_correction=True):
         self.mask = mask
         self.wavelength = wavelength
         self.xyz = xyz
@@ -45,7 +45,9 @@ class Detector():
         # merged intensity to frame correction factor (scaled)
         # diffraction = C x W
         self.C = self.Omega * self.P
-        self.C /= self.C.max()
+
+        if scale_correction:
+            self.C /= self.C.max()
 
         # low-angle dq
         self.dq = pixel_area**0.5 / wavelength / z
@@ -60,12 +62,23 @@ class Detector():
         self.qmin = qr[mask].min()
         self.qmax = qr[mask].max()
 
+        self.shape = mask.shape
 
-def Detector_cxi(cxi_file=None, mask=None):
+
+def Detector_cxi(cxi_file=None, mask=None, scale_correction=True, detector_distance=False):
     import h5py
     with h5py.File(cxi_file) as f:
         xyz = f['entry_1/instrument_1/detector_1/xyz_map'][()]
-        pixel_area = f['entry_1/instrument_1/detector_1/pixel_area'][()]
+        k1 = 'entry_1/instrument_1/detector_1/pixel_area'
+        k2 = 'entry_1/instrument_1/detector_1/x_pixel_size'
+        k3 = 'entry_1/instrument_1/detector_1/y_pixel_size'
+        if k1 in f:
+            pixel_area = f[k1][()]
+        elif k2 in f and k3 in f:
+            pixel_area = f[k2][()] * f[k3][()]
+        elif k2 in f:
+            pixel_area = f[k2][()]**2
+
         wav = f['/entry_1/instrument_1/source_1/photon_wavelength'][0]
 
         if mask is None:
@@ -73,6 +86,10 @@ def Detector_cxi(cxi_file=None, mask=None):
 
     polarisation = 'x'
 
-    detector = Detector(xyz, wav, polarisation, mask, pixel_area)
+    # optionally override detector distance
+    if detector_distance:
+        xyz[2] = detector_distance
+
+    detector = Detector(xyz, wav, polarisation, mask, pixel_area, scale_correction)
 
     return detector

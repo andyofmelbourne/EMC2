@@ -276,6 +276,10 @@ class Calc_logR():
         self.w_d = self.frames.w_d[d0:d1]
         assert (self.w_d.flags.c_contiguous)
 
+        assert(d1>d0)
+
+        print('hello*****************************************************')
+        print(f'{d0=} {d1=} {W_ri.shape=} {self.w_d=} {dr=} {K_di.shape=}')
         self.event = cl.Kernel(self.code_logR, 'calc_logR')(
             self.queue,
             (d1-d0,),
@@ -285,6 +289,124 @@ class Calc_logR():
             cl.SVM(self.logR_dr),
             cl.SVM(self.w_d),
             cl.SVM(self.B_di),
+            np.int32(dr),
+            np.int32(K_di.shape[1])
+        )
+
+        self.event.wait()
+
+        shape = (d1-d0, dr)
+        size = np.prod(shape)
+        out = self.logR_dr[:size].reshape(shape)
+        return out
+
+    def load_logR_buffers(self, r_chunk_size=1, d_chunk_size=1, I_chunk_size=1):
+        mf = cl.mem_flags
+        self.size = d_chunk_size * r_chunk_size * I_chunk_size
+
+        self.logR_dr = np.empty((d_chunk_size * r_chunk_size),
+                             dtype=np.float32)
+
+        self.code_logR = cl.Program(
+            self.context,
+            self.code_logR_cl.format(r_block_size=r_chunk_size)
+        ).build()
+
+
+class Calc_logR_back_fluence_free():
+    code_logR_cl = """
+    // r_block_size must equal R
+    __kernel void calc_logR (
+        global float *W_ri,
+        global uchar *K_di,
+        global float *logR_dr,
+        global float *B_di,
+        global float *B_d,
+        global float *W_r,
+        const int R,
+        const int I
+    )
+    {{
+        int d = get_global_id(0);
+        int D = get_global_size(0);
+
+        float F, K, B, Bd;
+        int i, r;
+
+        local float t[{r_block_size}];
+
+        for (r = 0; r < R; r++){{
+            t[r] = 0.;
+        }}
+
+        for (i = 0; i < I; i++){{
+            K = (float)K_di[d * I + i];
+            if (K > 0.) {{
+                B = B_di[d*I + i];
+                Bd = B_d[d];
+                for (r = 0; r < R; r++){{
+                    F = Bd / W_r[r] * W_ri[I * r + i] + B;
+                    if (F > 0.) {{
+                        F = log(fmax(1e-8f, F));
+                        // logR_dr[R * d + r] += K * F;
+                        t[r] += K * F;
+                    }}
+                }}
+            }}
+        }}
+
+        for (r = 0; r < R; r++){{
+            logR_dr[R * d + r] = t[r];
+        }}
+    }}
+    """
+    def __init__(self, frames, context, queue):
+        self.context = context
+        self.queue = queue
+        self.frames = frames
+
+    def calculate_logR(self, d0, d1, dr, W_ri, K_di, K_d, wsums_r):
+        """
+        K_di is already chunked
+        W_cl is already chunked (gpu)
+
+        logR_dr = sum_i K_di log[w_dr W_ri + B_di]
+        w_dr = (K_d - B_d) / sum_i W_ri
+
+        W_ri has been pre-multiplied by C_i
+        """
+        assert (K_di.flags.c_contiguous)
+        assert (K_di.size <= self.size)
+        assert (np.issubdtype(K_di.dtype, np.uint8))
+
+        B = self.frames.B_di
+        self.B_di = B.b_d[d0:d1, None] * B.B_ji[B.j_d[d0:d1]]
+        assert (self.B_di.flags.c_contiguous)
+        assert (np.issubdtype(self.B_di.dtype, np.float32))
+
+        self.w_d = self.frames.w_d[d0:d1]
+        assert (self.w_d.flags.c_contiguous)
+
+        B_d = (K_d - B.data_sum[d0:d1]).astype(np.float32)
+
+        assert (B_d.flags.c_contiguous)
+        assert (np.issubdtype(B_d.dtype, np.float32))
+
+        assert (wsums_r.flags.c_contiguous)
+        assert (np.issubdtype(wsums_r.dtype, np.float32))
+
+        assert(d1>d0)
+
+        self.event = cl.Kernel(self.code_logR, 'calc_logR')(
+            self.queue,
+            (d1-d0,),
+            (1,),
+            cl.SVM(W_ri),
+            cl.SVM(K_di),
+            cl.SVM(self.logR_dr),
+            cl.SVM(self.B_di),
+            cl.SVM(B_d),
+            cl.SVM(wsums_r),
             np.int32(dr),
             np.int32(K_di.shape[1])
         )

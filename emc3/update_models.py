@@ -189,13 +189,28 @@ class Update_model_class():
         # ----------------------------
         op = (c['likelihood'], c['frame_model'])
 
+        self.background = False
+        self.background_fluence_free = False
         if op == ('Poisson', 'basic'):
             self._calc_D = self._calc_CP
 
         elif op == ('Poisson', 'fluence'):
             self._calc_D = self._calc_CwP
 
-        elif op == ('Poisson_fluence_free', 'basic'):
+        elif op[1] == ('background') and (op[0] in ['Poisson', 'fluence_free']):
+            self.b_d = self.K_di.B_di.b_d
+            self.B_i = self.K_di.B_di.B_ji[0]
+            self.background = True
+
+            if op[0] == 'Poisson':
+                self._calc_D = self._calc_CwP
+
+            elif op[0] == 'fluence_free':
+                self._calc_D = self._calc_KBPC
+                self.KB_d = self.K_d - self.K_di.B_di.data_sum
+                self.background_fluence_free = True
+
+        elif op == ('fluence_free', 'basic'):
             self._calc_D = self._calc_CkP
 
         else:
@@ -245,15 +260,30 @@ class Update_model_class():
                 P_dr = self.P_dr[d0:d1, r0:r1].astype(np.float32)
                 K_di = self.K_di[d0:d1, :].astype(np.float32)
 
+                """
                 N_ri_dev, evt = gpu_dot(
                     P_dr,
                     K_di,
                     self.queue, a_transp=True, b_transp=False)
+
                 evt.wait()
                 self.N_ri += N_ri_dev.get()
+                """
+                # test np
+                N_ri_dev = np.dot(P_dr.T, K_di)
+                self.N_ri += N_ri_dev
+
                 # assert(np.allclose(N_ri, self.N_ri))
                 # print(f'P dot K time:', time() - t0)
                 # return self.N_ri
+
+            # ----------------------
+            # 3.5 subtract backgroud
+            # N_ri = \sum_d P_dr (K_di - b_d B_i)
+            #      = PK - B_i sum_d b_b P_dr
+            # ----------------------
+            if self.background:
+                self.N_ri -= self.B_i[None, :] * np.dot(self.b_d, self.P_dr[:, r0:r1])[:, None]
 
             # -----------------
             # 4. calculate D_ri
@@ -310,6 +340,10 @@ class Update_model_class():
 
         # I = N / D
 
+        # in case background subtraction
+        # gives -ve's
+        N_n = np.clip(N_n, 0, None)
+
         m = D_n == 0
         D_n[m] = 1.
         N_n /= D_n
@@ -345,13 +379,33 @@ class Update_model_class():
         return D_ri
 
 
-    def _calc_CkP(self, r0=0, r1=None):
+    def _calc_KBPC(self, r0=0, r1=None):
+        """
+        W_ri <- 1/C_i sum_d P_dr (K_di - B_di) / sum_d w_dr P_dr
+        w_rd = (K_d - B_d) / sum_i C_i W_ri
+
+        D_ri = C_i / wsums_r [sum_d (K_d - B_d) P_dr]
+        """
         if r1 is None:
             r1 = self.R
 
         self.N_ri *= self.wsums_r[r0:r1, None]
+
         D_ri = self.C_i[None, :] * \
-            np.dot(self.K_d, self.P_dr[:, r0:r1])[:, None]
+                np.dot(self.KB_d, self.P_dr[:, r0:r1])[:, None]
+        return D_ri
+
+    def _calc_CkP(self, r0=0, r1=None):
+        if r1 is None:
+            r1 = self.R
+
+        # test
+        self.N_ri *= self.wsums_r[r0:r1, None] / self.C_i[None, :]
+        D_ri = np.zeros(self.N_ri.shape, dtype=float)
+        D_ri.T[:] = np.dot(self.K_d, self.P_dr[:, r0:r1])
+        #self.N_ri *= self.wsums_r[r0:r1, None]
+        #D_ri = self.C_i[None, :] * \
+        #    np.dot(self.K_d, self.P_dr[:, r0:r1])[:, None]
         return D_ri
 
 
@@ -397,10 +451,17 @@ def calculate_fluence(config):
     D = config['classes'][0]['data'].shape[0]
     K_d = config['classes'][0]['data'].data_sum
 
+    # only works globally!
+    if config['classes'][0]['frame_model'] == 'background':
+        B_d = config['classes'][0]['data'].B_di.data_sum
+        K_d = K_d.copy() - B_d
+        assert (np.all(K_d > 0))
+
     w_d = np.zeros((D,), dtype=float)
 
     for c in config['classes']:
-        w_d += np.dot(c['P_dr'], c['wsums_r'])
+        with h5py.File(c['wsums_file'], 'r') as f:
+            w_d += f['P_dot_wsums'][()]
 
     w_d = K_d / w_d
     return w_d
@@ -443,7 +504,9 @@ def calculate_wsums_cl(
     if cl is None:
         cl = utils_cl.opencl_init()
 
-    if not (likelihood == 'Poisson' and frame_model == 'basic'):
+    # do it anyway
+    #if not (likelihood == 'Poisson' and frame_model == 'basic'):
+    if True:
         tomos = Tomograms(
                 mapper,
                 model,
@@ -458,8 +521,7 @@ def calculate_wsums_cl(
 
     return wsums_r
 
-
-def update_model_subprocess(config_file, config, p_per_device=2):
+def update_model_subprocess(config_file, config, p_per_device=2, cids=None, update_w=True):
     """
     calculate tomogram sums and fluence in this process (might par. later)
     then farm off model update to subprocesses
@@ -467,12 +529,25 @@ def update_model_subprocess(config_file, config, p_per_device=2):
     import subprocess, sys
     from . import utils_cl, utils
 
+    from mpi4py import MPI
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    name = MPI.Get_processor_name()
+
     cl = utils_cl.opencl_init()
+
+    # get classes to process
+    if cids is None:
+        cids = list(range(len(config['classes'])))
 
     # calculate tomogram sums if needed
     # ---------------------------------
     t0 = time()
-    for c in config['classes']:
+    for ci in cids:
+        c = config['classes'][ci]
+
         # load model
         if c['model'].data is None:
             with h5py.File(c['model_file']) as f:
@@ -481,40 +556,46 @@ def update_model_subprocess(config_file, config, p_per_device=2):
         c['mapper'].load_coords(c['data'].mask)
         c['wsums_r'] = calculate_wsums_cl(**c, cl=cl)
 
+        fnam = c['probability_matrix_file']
+        with h5py.File(fnam) as f:
+            P_dr = f['P_dr'][()]
+
+        Pw = np.dot(P_dr, c['wsums_r'])
+        del P_dr
+
         # write to file
         with h5py.File(c['wsums_file'], 'w') as f:
             f['wsums_r'] = c['wsums_r']
+            f['P_dot_wsums'] = Pw
+
 
     print(f'tomo time:', time() - t0)
 
+    comm.Barrier()
+
     # calculate fluence if needed
     # ---------------------------
-    t0 = time()
-    # load probability matrix
-    for c in config['classes']:
-        fnam = c['probability_matrix_file']
-        with h5py.File(fnam) as f:
-            c['P_dr'] = f['P_dr'][()]
+    if rank == 0:
+        t0 = time()
+        w_d = calculate_fluence(config)
 
-    w_d = calculate_fluence(config)
+        # write to file
+        if config['update_fluence']:
+            with h5py.File(config['fluence_file'], 'w') as f:
+                f['w_d'] = w_d
 
-    # write to file
-    with h5py.File(config['fluence_file'], 'w') as f:
-        f['w_d'] = w_d
-    print(f'fluence time:', time() - t0)
+        print(f'fluence time:', time() - t0)
 
-    # delete P_dr to save space
-    for c in config['classes']:
-        del c['P_dr']
-        c['P_dr'] = None
+    comm.Barrier()
 
-    # class ids
-    cids = [i for i in range(len(config['classes'])) if config['classes'][i]['update_model']]
+    for ci in cids:
+        if not config['classes'][ci]['update_model']:
+            cids.remove(ci)
 
     devices = utils_cl.get_devices(device_type='gpu')
 
     # number parallel processes
-    nproc = p_per_device * len(devices)
+    nproc = p_per_device
 
     # make cids_str = '0,1,2 3,4,5 6,7,8 9'
     cids_str = []
@@ -587,7 +668,7 @@ if __name__ == '__main__':
         c['mapper'].load_coords(c['data'].mask)
 
         t0 = time()
-        mupdate = Update_model_class(w_d, c, cl)
+        mupdate = Update_model_class(w_d, c, cl, r_chunk_size=4*1024, d_chunk_size=4*1024)
 
         I = mupdate.calculate()
 

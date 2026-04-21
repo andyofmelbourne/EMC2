@@ -123,6 +123,7 @@ class ImageView(pg.ImageView):
         self.labels_i = labels_i
 
         im, self.pos_i, self.N_i = make_2D_image(arrays_i)
+        #im, self.pos_i, self.N_i = make_2D_image_3(arrays_i)
         im[im == 0] = np.nan
 
         self.setImage(
@@ -190,6 +191,33 @@ class ImageView(pg.ImageView):
                 self.N_i,
                 self.info_i
                 )
+
+
+def make_2D_image_3(arrays_i):
+    # calculate grid
+    m = 3
+    n = math.ceil(len(arrays_i)/m)
+
+    N = arrays_i[0].shape[0]
+
+    im = np.zeros((n * N, m * N), dtype=np.float32)
+
+    # output centre positions
+    positions_i = []
+
+    for i in range(n):
+        for j in range(m):
+            c = m*i + j
+            if c < len(arrays_i):
+                im[i*N: (i+1)*N, j*N: (j+1)*N] = arrays_i[c]
+                x = N * (c % m) + N/2 + 0.5
+                y = N * (c // m) + N/2 + 0.5
+                positions_i.append((x, y))
+
+    # must be equal for now
+    N_i = N * np.ones((len(arrays_i),), dtype=int)
+
+    return im, positions_i, N_i
 
 
 def make_2D_image(arrays_i):
@@ -368,6 +396,9 @@ class Model_slice_widget(ImageView):
     def __init__(self, directory, parent=None):
         fnam = Path(directory) / 'iteration_info.h5'
 
+        self.model_d = None
+        self.r_d = None
+
         if not fnam.is_file:
             raise ValueError(f'could not find {fnam}')
 
@@ -387,12 +418,14 @@ class Model_slice_widget(ImageView):
 
 
     def get_frames(self, labels):
-        gkey, class_labels = self.slice_getter.itget._get_data(
-            keys=[self.class_labels_key,]
+        gkey, class_labels, self.model_d, self.r_d = self.slice_getter.itget._get_data(
+            keys=[self.class_labels_key, 'most_likely_model_d', 'most_likely_orientation_d']
         )
 
         selected_frames_full = []
         for c in labels:
+            print(f'{class_labels=}')
+            print(f'{self.class_labels_key=}')
             selected_frames_full.append(np.where(class_labels==c)[0])
 
         selected_frames_full = np.concatenate(selected_frames_full)
@@ -406,7 +439,7 @@ class Model_slice_widget(ImageView):
     def showFrames(self, labels):
         gkey, selected_frames_full = self.get_frames(labels)
 
-        self.showFramesSignal.emit(selected_frames_full)
+        self.showFramesSignal.emit([selected_frames_full, self.model_d, self.r_d])
 
     def saveLabels(self, labels):
         gkey, selected_frames_full = self.get_frames(labels)

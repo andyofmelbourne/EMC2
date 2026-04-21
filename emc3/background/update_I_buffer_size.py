@@ -45,12 +45,16 @@ def get_sparse_P_matrix(P_dr):
     return Ps_dr, rs_d, Nr
 
 
-def update_buffer_size(config, config_file, p_per_device=2):
+def update_buffer_size(config, config_file, p_per_device=2, cids=None):
     # classes to process
-    cids = []
-    for ci, c in enumerate(config['classes']):
-        if c['update_model']:
-            cids.append(ci)
+    if cids is None:
+        cids = list(range(len(config['classes'])))
+
+    for ci in cids:
+        c = config['classes'][ci]
+
+        if not c['update_model']:
+            cids.remove(ci)
 
     cids_str = ' '.join([str(i) for i in cids])
 
@@ -83,10 +87,8 @@ def update_buffer_size(config, config_file, p_per_device=2):
     if p.returncode != 0:
         raise ValueError('something went wrong with call')
 
-    # merge files
-    cids = [c['class_id'] for c in config['classes']]
-
-    for c in config['classes']:
+    for ci in cids:
+        c = config['classes'][ci]
         cid = c['class_id']
 
         counts_n = np.zeros(c['model'].shape, dtype=int)
