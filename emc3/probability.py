@@ -11,9 +11,6 @@ from . import input_output
 
 from scipy.ndimage import gaussian_filter1d
 
-import warnings
-# warnings.filterwarnings("ignore", category=cl.CompilerWarning)
-os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
 
 cl_code = """
     // optimised for cpu with one worker per d

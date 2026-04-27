@@ -87,9 +87,7 @@ import pyopencl as cl
 import pyopencl.array as cl_array
 import pyclblast
 
-import warnings, os
-# warnings.filterwarnings("ignore", category=cl.CompilerWarning)
-os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
+import os
 
 
 def gpu_dot(A, B, queue, a_transp=False, b_transp=False):

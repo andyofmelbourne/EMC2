@@ -90,9 +90,7 @@ import pyopencl as cl
 import pyopencl.array as cl_array
 import pyclblast
 
-import warnings, os
-# warnings.filterwarnings("ignore", category=cl.CompilerWarning)
-os.environ["PYOPENCL_COMPILER_OUTPUT"] = "1"
+import os
 
 
 class Update_model_class():

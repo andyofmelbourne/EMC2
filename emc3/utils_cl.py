@@ -1,8 +1,20 @@
+import os
+import warnings
+import pathlib
+
+# redirect pyopencl compiler cache to /tmp to use fast local storage and avoid
+# network filesystem contention on HPC clusters
+_cl_cache_base = pathlib.Path('/tmp') / os.environ.get('USER', 'user')
+_cl_cache_base.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault('XDG_CACHE_HOME', str(_cl_cache_base))
+
 import pyopencl as cl
 import pyopencl.array
 import pyclblast
 import numpy as np
 import logging
+
+warnings.filterwarnings('ignore', category=cl.CompilerWarning)
 
 logger = logging.getLogger(__name__)
 
