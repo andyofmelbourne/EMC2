@@ -142,7 +142,14 @@ class Probability():
         self.normalise_P_dr = cl.Kernel(self.cl_cpu_code, "normalise_P_dr")
 
     def calculate(self, P_dr, logR_dr, d00, d11):
-        D, R = logR_dr.shape
+        """
+        d00 and d11 are global indices
+        P_dr and logR_dr are chunked arrays
+
+        e.g. P_dr[:d11-d00] will be set
+        """
+        D = d11-d00
+        R = logR_dr.shape[1]
 
         # per chunk arrays
         # I would love to move the chunking logic elsewhere
@@ -207,13 +214,13 @@ class Probability():
 
         return P_dr
 
-    def save_P_dr(self, fnams, update_probability_c, d0, d1):
+    def save_P_dr(self, fnams, update_probability_c, d0, d1, P_dr):
         index = 0
         for c, fnam in enumerate(fnams):
             r0, r1 = index, index + self.Rs[c]
             if update_probability_c[c]:
                 with h5py.File(fnam, 'r+') as f:
-                    f['P_dr'][d0:d1, :] = self.P_dr[:d1-d0, r0:r1]
+                    f['P_dr'][d0:d1, :] = P_dr[:d1-d0, r0:r1]
                     if 'beta' not in f:
                         f['beta'] = self.beta
             else:
@@ -238,6 +245,8 @@ def continuity(P_dr, config):
     """test: smooth P_dr across classes
 
     only works if each class has the same number of rotations
+
+    preserves normalisation along r for each d
 
     config['continuity_groups'] = [
         {
@@ -285,84 +294,142 @@ def continuity(P_dr, config):
     # P_dcr = gaussian_filter1d(P_dcr, 0.7, mode='reflect', axis=1)
     # P_dr[:] = P_dcr.reshape((dd, -1))
 
-
-def calculate_P(config, beta):
+def load_logR_dr_chunks(d0, d1, config, logR_dr):
     """
-    basic all in memory cpu process
+    load logR_dr d-chunk from each class into a single array
+
+    data is written to logR_dr
     """
-    R = config['R']
-    D = config['classes'][0]['P_data'].shape[0]
-
-    class_r = np.empty(R)
-    logR_dr = np.empty((D, R))
-    P_dr = np.zeros((D, R))
-    update_probability_c = np.empty(len(config['classes']))
-
-    P_thresh = config['classes'][0]['P_thresh']
-
-    Rs = []
     for ci, c in enumerate(config['classes']):
-        R_c = c['mapper'].shape[1]
-        Rs.append(R_c)
-        r0 = c['r_offset']
-        class_r[r0:r0+R_c] = ci
-
-        # load logR for class ci
+        r0 = c['r_offset']  # global offset for this class
+        R_c = c['mapper'].shape[1]  # number of r's for this class
         with h5py.File(c['logR_file']) as f:
-            logR_dr[:, r0:r0+R_c] = f['logR_dr'][()]
-            D, R = f['logR_dr'].shape
+            logR_dr[:d1-d0, r0:r0+R_c] = f['logR_dr'][d0:d1]
 
-        update_probability_c[ci] = c['update_probability']
+def load_P_dr_chunks(d0, d1, config, P_dr):
+    """
+    load P_dr d-chunk from each class into a single array
 
-        # load probability matrix for classes that
-        # don't have update_probability = True
-        # so we can write to iteration info and use continuity
+    only load P_dr from a class if it is
+    not going to be updated (for continuity)
+    """
+    for ci, c in enumerate(config['classes']):
+        r0 = c['r_offset']          # global offset for this class
+        R_c = c['mapper'].shape[1]  # number of r's for this class
         fnam = c['probability_matrix_file']
+        if c['update_probability']:
+            with h5py.File(fnam) as f:
+                P_dr[:d1-d0, r0:r0+R_c] = f['P_dr'][d0:d1]
+
+
+def initialise_P_dr_files_if_needed(config):
+    """
+    If P_dr matrix file does not exist, or has the wrong shape
+    then initialise the file for writing in chunks
+    """
+    for ci, c in enumerate(config['classes']):
+        fnam = c['probability_matrix_file']
+
+        # class (not global) D, R
+        D = c['data'].shape[0]
+        R = c['mapper'].shape[1]
+
         p_init = True
         if Path(fnam).is_file():
             with h5py.File(fnam) as f:
                 if f['P_dr'].shape == (D, R):
-                    P_dr[:, r0:r0+R_c] = f['P_dr'][()]
                     p_init = False
 
+        if not c['update_probability']:
+            p_init = False
+
         # initialise probability files if needed
-        if c['update_probability'] and p_init:
-            with h5py.File(c['probability_matrix_file'], 'w') as f:
+        if p_init:
+            with h5py.File(fnam, 'w') as f:
                 f.create_dataset('P_dr', shape=(D, R), dtype=float)
 
-    fnams = [c['probability_matrix_file'] for c in config['classes']]
 
-    # calculate all probabilities (normalise logR)
-    prob = Probability(D, np.sum(Rs), beta, class_r, P_thresh)
+def get_class_index_r(config):
+    # calculate class index for each global r-index
+    # this is needed only for occupancy_dc
+    # ---------------------------------------------
+    class_r = np.empty(config['R'])
+    for ci, c in enumerate(config['classes']):
+        R_c = c['mapper'].shape[1]
+        r0 = c['r_offset']
+        class_r[r0:r0+R_c] = ci
+    return class_r
 
-    # calculate frame chunksize ~2G
-    D, R = logR_dr.shape
+def keep_n_frames(P_dr, config):
+    """
+    keep the highest 'f' terms in P_dr for each frame (d)
+    remaining terms are set to zero
+
+    where:
+        f = config['P_thresh_frames']
+    """
+    # test threshold
+    key = 'P_thresh_frames'
+    R = P_dr.shape[1]
+    if key in config and config[key]:
+        # at most f r's per frame
+        f = config[key]
+        p = (1-f/R)*100
+        thresh_d = np.percentile(P_dr, p, axis=1)
+        m = P_dr > thresh_d[:, None]
+        P_dr *= m
+
+        # renormalise
+        P_dr /= np.sum(P_dr, axis=1)[:, None]
+
+
+def calculate_P(config, beta):
+    """
+    calculate P_dr from logR_dr in d-chunks
+
+    load logR_dr[d0:d1] for each class
+    calculate P_dr[d0:d1]
+    save
+    continue
+    """
+    R = config['R']
+    D = config['classes'][0]['P_data'].shape[0]
+
+    # Hack: this should be set for each class independently
+    # but for now is gloabal
+    P_thresh = config['classes'][0]['P_thresh']
+
+    # calculate chunksize ~2Gb
+    # ------------------------
     mem = 2 * 1024**3
     d_chunk_size = max(1, int(mem / (8 * R)))
     d_chunk_size = min(d_chunk_size, D)
 
+    logR_dr_chunk = np.empty((d_chunk_size, R))
+    P_dr_chunk    = np.zeros((d_chunk_size, R))
+    class_r       = get_class_index_r(config)
+    fnams_c       = [c['probability_matrix_file'] for c in config['classes']]
+    update_probability_c = [c['update_probability'] for c in config['classes']]
+
+    initialise_P_dr_files_if_needed(config)
+
+    # calculate all probabilities (normalise logR)
+    prob = Probability(D, R, beta, class_r, P_thresh)
+
+    # loop over d-chunks
+    # ------------------
     for d0, d1, dd in chunker(d_chunk_size, D):
-        # in-place operation
-        P_dr_chunk = P_dr[d0: d1]
-        prob.calculate(P_dr_chunk, logR_dr[d0:d1], d0, d1)
+        load_logR_dr_chunks(d0, d1, config, logR_dr_chunk)
+        load_P_dr_chunks(d0, d1, config, P_dr_chunk)
 
-        continuity(P_dr_chunk, config)
+        prob.calculate(P_dr_chunk, logR_dr_chunk, d0, d1)
 
-        # test threshold
-        key = 'P_thresh_frames'
-        if key in config and config[key]:
-            # at most f r's per frame
-            f = config[key]
-            p = (1-f/R)*100
-            thresh_d = np.percentile(P_dr_chunk, p, axis=1)
-            m = P_dr_chunk > thresh_d[:, None]
-            P_dr_chunk *= m
+        # post processing
+        continuity(P_dr_chunk[:dd], config)
+        keep_n_frames(P_dr_chunk[:dd], config)
 
-        # renormalise
-        P_dr_chunk /= np.sum(P_dr_chunk, axis=1)[:, None]
-
-        # save in class files
-        prob.save_P_dr(fnams, update_probability_c, d0, d1)
+        # save P_dr_chunk in class files
+        prob.save_P_dr(fnams_c, update_probability_c, d0, d1, P_dr_chunk)
 
     # save extra data in iteration file
     prob.save_iteration(config['working_directory'])

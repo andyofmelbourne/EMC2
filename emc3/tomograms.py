@@ -198,6 +198,10 @@ class Tomograms_cl():
         if W_cl is None:
             W_cl = self.W_cl
 
+        print(f'{r1-r0=} {self.tomo.shape[1]=}')
+        print(f'{W_cl=}')
+        print(f'{self.r_cl=}')
+        print(f'{self.M_cl=}')
         self.event = cl.Kernel(code, 'tomo')(
             self.queue,
             (self.tomo.shape[1], r1-r0),

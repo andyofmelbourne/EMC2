@@ -87,19 +87,13 @@ class Likelihood():
         d0, d1 = drange
         r0, r1 = rrange
 
-        print(f'******************************************************hello*************************************************')
-        print(f'{self.frame_model=}')
-        print(f'{self.likelihood=}')
-
         # offset
         if (
                 self.frame_model == 'basic'
                 and self.likelihood == 'fluence_free'
                 ):
-            print(f'{logR_dr.max()=}')
             logR_dr -= self.K_di.data_sum[d0:d1, None] \
                     * np.log(self.wsums_r[r0:r1])[None, :]
-            print(f'{logR_dr.max()=}')
 
         elif (
                 self.frame_model == 'basic'

@@ -256,11 +256,12 @@ if __name__ == '__main__':
 
     cl_stuff = utils_cl.opencl_init()
 
-    N = 192
+    #N = 192
+    N = 256
     i, j, k = np.indices((N, N, N))
 
     # inverse Angstroms
-    dq = 0.000270731 * 1e10
+    dq = 4 * 0.000270731 * 1e10
 
     out = sys.argv[1]+f'_dq_{dq}_N_{N}.pickle'
 
