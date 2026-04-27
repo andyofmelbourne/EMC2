@@ -405,46 +405,6 @@ class Update_model_class():
         #D_ri = self.C_i[None, :] * \
         #    np.dot(self.K_d, self.P_dr[:, r0:r1])[:, None]
         return D_ri
-
-
-
-def update_model_basic(config):
-    """
-    cpu all in memory update (in place operation on config)
-
-    1. calculate wsums_r (if needed)
-    2. calculate w_d     (if needed)
-
-    chunked:
-    3. calculate D_ri
-    4. calculate P . K
-    5. calculate voxel mapping n_sri
-    6. merge N and D (in tomos or model space)
-    7. apply symmetry
-    """
-    t0 = time()
-    for c in config['classes']:
-        # calculate tomogram sums if needed
-        c['mapper'].load_coords(c['data'].mask)
-        c['wsums_r'] = calculate_wsums_cl(**c)
-    print(f'tomo time:', time() - t0)
-
-    # calculate fluence if needed
-    t0 = time()
-    w_d = calculate_fluence(config)
-    print(f'fluence time:', time() - t0)
-
-    t0 = time()
-    for c in config['classes']:
-        mupdate = Update_model_class(w_d, c)
-
-        I = mupdate.calculate()
-
-        c['model'].data = I
-
-    print(f'update time:', time() - t0)
-
-
 def calculate_fluence(config):
     D = config['classes'][0]['data'].shape[0]
     K_d = config['classes'][0]['data'].data_sum
