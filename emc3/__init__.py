@@ -4,7 +4,6 @@ from . import data
 from . import model
 from . import mapper
 from . import probability
-from . import update_models
 from . import update_models_single
 from . import calculate_logR_single
 from . import background

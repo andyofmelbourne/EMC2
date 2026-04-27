@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument(
         'logfile',
         type=str,
-        help='emc2 log file (emc2.log)'
+        help='emc3 log file (emc3.log)'
     )
 
     parser.add_argument(

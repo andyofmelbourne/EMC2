@@ -19,7 +19,8 @@ class Likelihood():
     No background:
         likelihood = 'fluence_free'
         frame_model = 'basic'
-            logR_dr = \sum_i K_di logW_ri - K_d log(sum_i W_ri)
+            logR_dr = \sum_i K_di logW_ri - (K_d + 1) log(sum_i W_ri)
+            (the +1 comes from integrating over w_d with a flat prior: int R_dr dw_d includes a 1/S_r factor)
 
         likelihood = 'Poisson'
         frame_model = 'basic'
@@ -92,7 +93,7 @@ class Likelihood():
                 self.frame_model == 'basic'
                 and self.likelihood == 'fluence_free'
                 ):
-            logR_dr -= self.K_di.data_sum[d0:d1, None] \
+            logR_dr -= (self.K_di.data_sum[d0:d1, None] + 1) \
                     * np.log(self.wsums_r[r0:r1])[None, :]
 
         elif (
