@@ -245,7 +245,7 @@ def calculate_logR_subprocess_2D(config_file, config, p_per_device=16, cids=None
     return True
 
 
-def calculate_logR_subprocess(config_file, config, p_per_device=2):
+def calculate_logR_subprocess(config_file, config, p_per_device=2, cids=None):
     """
     calculate logR in a separate process
     2 processes for each device
@@ -253,8 +253,11 @@ def calculate_logR_subprocess(config_file, config, p_per_device=2):
     """
     import subprocess, sys
 
-    # class ids
-    for ci, c in enumerate(config['classes']):
+    if cids is None:
+        cids = range(len(config['classes']))
+
+    for ci in cids:
+        c = config['classes'][ci]
         class_id = c['class_id']
 
         R = c['mapper'].shape[1]

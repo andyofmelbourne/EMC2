@@ -120,7 +120,7 @@ def calculate_logR_class_0_c(c, cl):
 
     return calculate_logR_class_0(L, cl)
 
-def calculate_logR_subprocess(config_file, config, p_per_device=2):
+def calculate_logR_subprocess(config_file, config, p_per_device=2, cids=None):
     """
     calculate logR in a separate process
     2 processes for each device
@@ -130,7 +130,10 @@ def calculate_logR_subprocess(config_file, config, p_per_device=2):
     from . import utils_cl, utils
 
     # class ids
-    cids = [i for i in range(len(config['classes'])) if config['classes'][i]['update_logR']]
+    if cids is None:
+        cids = [i for i in range(len(config['classes'])) if config['classes'][i]['update_logR']]
+    else:
+        cids = [ci for ci in cids if config['classes'][ci]['update_logR']]
 
     devices = utils_cl.get_devices(device_type='gpu')
 
