@@ -6,6 +6,7 @@ from . import mapper
 from . import probability
 from . import background
 from . import run
+from . import input_output
 #from . import show_occupancy_shifts
 
 from .detector import Detector_cxi

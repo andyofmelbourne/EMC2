@@ -164,29 +164,27 @@ cids = list(range(len(config['classes'])))
 my_classes = cids[rank::size]
 
 beta = beta_start
-fnam_iter = Path('iteration_info.h5')
 last_change = -100
+iter_stats = None  # stats returned by calculate_P + save_iteration_info
 
 for i in range(iters):
-    # increment beta if there are less than 5% orientation / class changes
-    # beta = (beta_stop / beta_start)**(min(i, iter_stop-1)/(iter_stop-1)) * beta_start
-    if fnam_iter.is_file():
-        with h5py.File(fnam_iter, 'r') as f:
-            k1 = 'orientation_changes'
-            k2 = 'class_changes'
-            if k1 in f and k2 in f:
-                orientation_changes = f[k1][-1] + f[k2][-1]
-                change = orientation_changes / Nframes
-                # prevent double jump
+    # beta scheduling from previous iteration's in-memory stats.
+    # Rank 0 holds iter_stats; broadcast just the two change counts.
+    n_changes = None
+    if rank == 0 and iter_stats is not None:
+        n_changes = iter_stats['orientation_changes'] + iter_stats['class_changes']
+    n_changes = comm.bcast(n_changes, root=0)
 
-                print(f'{rank=} {change=} {last_change=} {i=}')
-                sys.stdout.flush()
+    if n_changes is not None:
+        change = n_changes / Nframes
+        print(f'{rank=} {change=} {last_change=} {i=}')
+        sys.stdout.flush()
 
-                if change < 0.05 and last_change != (i-1) and beta != beta_stop:
-                    beta *= 2
-                    last_change = i
+        if change < 0.05 and last_change != (i - 1) and beta != beta_stop:
+            beta *= 2
+            last_change = i
 
-        if beta == beta_stop and change < 0.05 and last_change != (i-1):
+        if beta == beta_stop and change < 0.05 and last_change != (i - 1):
             break
 
     beta = min(beta, beta_stop)
@@ -200,9 +198,13 @@ for i in range(iters):
 
     if rank == 0:
         t0 = time()
-        emc3.probability.calculate_P(config, beta)
+        stats = emc3.probability.calculate_P(config, beta)
         time_prob = time() - t0
         _assert_probability(config)
+        iter_stats = emc3.input_output.save_iteration_info(
+            stats, config['working_directory']
+        )
+        emc3.input_output.print_iteration_stats(iter_stats)
 
     comm.Barrier()
 

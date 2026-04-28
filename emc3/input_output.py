@@ -86,129 +86,125 @@ def write_h5(f, k, v, compression=True, chunks=None):
                 chunks = v.shape
             f.create_dataset(k, data=v, chunks=chunks, compression=compression)
 
-def save_iteration_info(
-    P_max_d,
-    Q_d,
-    Q_old_d,
-    class_max_d,
-    local_rmax_d,
-    occupancy_dc,
-    occupancy_r,
-    working_directory,
-    beta,
-    sparse_file=''
-):
+def save_iteration_info(stats, working_directory):
+    """
+    Write per-iteration statistics to iteration_info.h5.
+
+    Parameters
+    ----------
+    stats : dict
+        Output of ``probability.calculate_P``.  Required keys:
+        ``P_max_d``, ``Q_d``, ``Q_old_d``, ``class_max_d``,
+        ``local_rmax_d``, ``occupancy_dc``, ``occupancy_r``, ``beta``.
+        Optional: ``sparse_file``.
+    working_directory : str or Path
+
+    Returns
+    -------
+    dict
+        A copy of *stats* augmented with the computed scalars:
+        ``N`` (iteration index), ``orientation_changes``,
+        ``class_changes``, ``dQ``.
+    """
+    P_max_d      = stats['P_max_d']
+    Q_d          = stats['Q_d']
+    Q_old_d      = stats['Q_old_d']
+    class_max_d  = stats['class_max_d']
+    local_rmax_d = stats['local_rmax_d']
+    occupancy_dc = stats['occupancy_dc']
+    occupancy_r  = stats['occupancy_r']
+    beta         = stats['beta']
+    sparse_file  = stats.get('sparse_file', '')
+
     fnam = Path(working_directory).joinpath('iteration_info.h5')
 
-    # get iteration number
     if fnam.is_file():
         with h5py.File(fnam, 'r') as f:
             N = f['iterations'][()]
     else:
         N = 0
 
-    logger.info(f'saving iteration info to {fnam} '
-                f'for iteration {N}')
+    logger.info(f'saving iteration info to {fnam} for iteration {N}')
 
-    # initialise or resize datasets
+    scalar_keys = ['beta', 'Q', 'dQ', 'P_gini', 'orientation_changes', 'class_changes']
+
     if N == 0:
         with h5py.File(fnam, 'w') as f:
-            f['iterations'] = N+1
-
-            f.create_dataset(
-                'beta',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.float32
-            )
-
-            f.create_dataset(
-                'Q',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.float32
-            )
-
-            f.create_dataset(
-                'dQ',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.float32
-            )
-
-            f.create_dataset(
-                'P_gini',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.float32
-            )
-
-            f.create_dataset(
-                'orientation_changes',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.int32
-            )
-
-            f.create_dataset(
-                'class_changes',
-                shape=(1,),
-                maxshape=(None,),
-                dtype=np.int32
-            )
+            f['iterations'] = N + 1
+            for k in scalar_keys:
+                f.create_dataset(k, shape=(1,), maxshape=(None,), dtype=np.float32)
     else:
-        # resize
-        keys = ['beta', 'Q', 'dQ', 'P_gini', 'orientation_changes', 'class_changes']
         with h5py.File(fnam, 'r+') as f:
-            for key in keys:
-                f[key].resize(N+1, axis=0)
+            for k in scalar_keys:
+                f[k].resize(N + 1, axis=0)
 
-    # write other results to iteration_{N}
+    # defaults (first iteration: treat all frames as changed)
+    orientation_changes = int(Q_d.shape[0])
+    class_changes       = int(Q_d.shape[0])
+    dQ                  = 0.
+
     with h5py.File(fnam, 'r+') as f:
-        k = f'iteration_{N}'
-        if k in f:
-            g = f[k]
-        else:
-            g = f.create_group(k)
+        grp = f.require_group(f'iteration_{N}')
 
-        write_h5(g, 'occupancy_r', occupancy_r)
-        write_h5(g, 'P_gini_d', P_max_d)
-        write_h5(g, 'Q_d', Q_d)
-        write_h5(g, 'most_likely_model_d', class_max_d)
-        write_h5(g, 'occupancy_dc', occupancy_dc)
-        write_h5(g, 'most_likely_orientation_d', local_rmax_d)
-        write_h5(g, 'sparse_file', sparse_file)
-        f['iterations'][...] = N+1
-        f['beta'][N] = beta
-        f['Q'][N] = np.mean(Q_d)
+        write_h5(grp, 'occupancy_r',              occupancy_r)
+        write_h5(grp, 'P_gini_d',                 P_max_d)
+        write_h5(grp, 'Q_d',                      Q_d)
+        write_h5(grp, 'most_likely_model_d',      class_max_d)
+        write_h5(grp, 'occupancy_dc',             occupancy_dc)
+        write_h5(grp, 'most_likely_orientation_d', local_rmax_d)
+        write_h5(grp, 'sparse_file',              sparse_file)
+
+        f['iterations'][...] = N + 1
+        f['beta'][N]         = beta
+        f['Q'][N]            = np.mean(Q_d)
+        f['P_gini'][N]       = np.mean(P_max_d)
+
         if N > 0:
-            f['dQ'][N] = np.mean(Q_old_d - f[f'iteration_{N-1}/Q_d'][()])
+            prev = f[f'iteration_{N-1}']
+
+            dQ = float(np.mean(Q_old_d - prev['Q_d'][()]))
+            f['dQ'][N] = dQ
+
+            mlm_prev = prev['most_likely_model_d'][()]
+            D = min(mlm_prev.shape[0], class_max_d.shape[0])
+            class_changes = int(np.sum(mlm_prev[:D] != class_max_d[:D]))
+            f['class_changes'][N] = class_changes
+
+            mlo_prev = prev['most_likely_orientation_d'][()]
+            D = min(mlo_prev.shape[0], local_rmax_d.shape[0])
+            orientation_changes = int(np.sum(mlo_prev[:D] != local_rmax_d[:D]))
+            f['orientation_changes'][N] = orientation_changes
         else:
-            f['dQ'][N] = 0
-        f['P_gini'][N] = np.mean(P_max_d)
+            f['dQ'][N]                  = dQ
+            f['class_changes'][N]       = class_changes
+            f['orientation_changes'][N] = orientation_changes
 
-        # write differences
-        if N > 0:
-            k0 = f'iteration_{N-1}'
-            g0 = f[k0]
+    return {
+        **stats,
+        'N':                   N,
+        'orientation_changes': orientation_changes,
+        'class_changes':       class_changes,
+        'dQ':                  dQ,
+    }
 
-            mlm_d0 = g0['most_likely_model_d'][()]
-            mlm_d1 = class_max_d
 
-            # if the number of patterns has changed
-            # numbers might be rubish
-            D = min(mlm_d0.shape[0], mlm_d1.shape[0])
-            dc = np.sum(mlm_d0[:D] != mlm_d1[:D])
-            f['class_changes'][N] = dc
+def print_iteration_stats(stats):
+    """Print a one-line summary of iteration statistics to stdout."""
+    beta   = stats['beta']
+    Q      = float(np.mean(stats['Q_d']))
+    P_gini = float(np.mean(stats['P_max_d']))
 
-            mlo_d0 = g0['most_likely_orientation_d'][()]
-            mlo_d1 = local_rmax_d
+    parts = [f"beta={beta:.3f}", f"Q={Q:.2f}", f"P_gini={P_gini:.4f}"]
 
-            D = min(mlo_d0.shape[0], mlo_d1.shape[0])
-            do = np.sum(mlo_d0[:D] != mlo_d1[:D])
-            f['orientation_changes'][N] = do
-        else:
-            f['class_changes'][N] = Q_d.shape[0]
-            f['orientation_changes'][N] = Q_d.shape[0]
+    if 'dQ' in stats:
+        parts.append(f"dQ={stats['dQ']:.2f}")
 
-    return True
+    if 'orientation_changes' in stats and 'class_changes' in stats:
+        D      = len(stats['Q_d'])
+        total  = stats['orientation_changes'] + stats['class_changes']
+        parts.append(f"changes={total / D:.1%}")
+
+    if 'N' in stats:
+        parts.insert(0, f"iter={stats['N']}")
+
+    print("  ".join(parts))

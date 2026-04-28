@@ -225,19 +225,6 @@ class Probability():
                      f'skipping update for class {c}')
             index = r1
 
-    def save_iteration(self, working_directory):
-        input_output.save_iteration_info(
-            self.Pmax_d,
-            self.Q_d,
-            self.Q_old_d,
-            self.class_max_d,
-            self.local_rmax_d,
-            self.occupancy_dc,
-            self.occupancy_r,
-            working_directory,
-            self.beta
-        )
-
 def continuity(P_dr, config):
     """test: smooth P_dr across classes
 
@@ -428,7 +415,15 @@ def calculate_P(config, beta):
         # save P_dr_chunk in class files
         prob.save_P_dr(fnams_c, update_probability_c, d0, d1, P_dr_chunk)
 
-    # save extra data in iteration file
-    prob.save_iteration(config['working_directory'])
-
     config['most_likely_model_d'] = prob.class_max_d
+
+    return {
+        'P_max_d':       prob.Pmax_d,
+        'Q_d':           prob.Q_d,
+        'Q_old_d':       prob.Q_old_d,
+        'class_max_d':   prob.class_max_d,
+        'local_rmax_d':  prob.local_rmax_d,
+        'occupancy_dc':  prob.occupancy_dc,
+        'occupancy_r':   prob.occupancy_r,
+        'beta':          beta,
+    }
