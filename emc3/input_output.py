@@ -188,6 +188,40 @@ def save_iteration_info(stats, working_directory):
     }
 
 
+def save_output(config):
+    """
+    Save per-iteration model slices and data info to iteration_info.h5.
+
+    Loads model arrays from each class's model_file, writes model slices,
+    then writes frame/DOS data. Optionally computes DOS if 'frame_labels'
+    is present in config.
+    """
+    from . import utils
+    from .degree_of_separation import calculate_DOS
+
+    wd  = config['working_directory']
+    dq  = config['classes'][0]['model'].dq
+
+    models = []
+    for c in config['classes']:
+        with h5py.File(c['model_file']) as f:
+            models.append(f['data'][()])
+    utils.save_model_slices(models, dq, wd)
+
+    frames_d     = config['classes'][0]['data'].frames
+    D            = config['classes'][0]['data'].source_shape[0]
+    frame_labels = config.get('frame_labels')
+
+    if frame_labels is not None:
+        m_d = config['most_likely_model_d']
+        A_d, B_d, *_ = frame_labels.values()
+        DOS = calculate_DOS(A_d[frames_d], B_d[frames_d], m_d)
+    else:
+        DOS = None
+
+    utils.save_data_info(frames_d, frame_labels, DOS, D, wd)
+
+
 def print_iteration_stats(stats):
     """Print a one-line summary of iteration statistics to stdout."""
     beta   = stats['beta']

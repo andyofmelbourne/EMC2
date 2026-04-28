@@ -216,50 +216,8 @@ for i in range(iters):
 
     comm.Barrier()
 
-    # save model slices
-    # -----------------
     if rank == 0:
-        dq = config['classes'][0]['model'].dq
-        models = []
-        for c in config['classes']:
-            with h5py.File(c['model_file']) as f:
-                models.append(f['data'][()])
-
-        emc3.utils.save_model_slices(
-                models,
-                dq,
-                config['working_directory']
-                )
-
-        # save extra info
-        # ---------------
-        # in principle different classes can have different data
-        # in which case this will break
-        frames_d = config['classes'][0]['data'].frames
-        D = config['classes'][0]['data'].source_shape[0]
-
-        # save DOS
-        # need to clean all this iteration_info stuff up
-        k = 'frame_labels'
-        if k in config:
-            m_d = config['most_likely_model_d']
-            A_d, B_d, *_ = config[k].values()
-            A_d = A_d[frames_d]
-            B_d = B_d[frames_d]
-            DOS = emc3.calculate_DOS(A_d, B_d, m_d)
-            frame_labels = config[k]
-        else:
-            DOS = None
-            frame_labels = None
-
-        emc3.utils.save_data_info(
-                frames_d,
-                frame_labels,
-                DOS,
-                D,
-                config['working_directory']
-                )
-
+        emc3.input_output.save_output(config)
         print(f'{time_I=}')
         print(f'{time_prob=}')
         print(f'{time_logR=}')
