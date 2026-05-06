@@ -10,6 +10,7 @@ os.environ.setdefault('XDG_CACHE_HOME', str(_cl_cache_base))
 
 import pyopencl as cl
 import pyopencl.array
+import pyopencl.elementwise as elwise
 import pyclblast
 import numpy as np
 import logging
@@ -267,6 +268,85 @@ class Bincount_cl():
         """
 
 
+class ScatterAdd_cl():
+    """
+    Parallel weighted scatter-add (histogram) on a CPU OpenCL device.
+
+    Divides the input into n_kernels = max_compute_units // workers_per_kernel
+    chunks.  Each chunk is dispatched to its own queue with a private
+    accumulator, so CAS contention is limited to workers_per_kernel writers.
+    On a laptop (few cores) n_kernels degrades to 1, matching the original
+    single-kernel behaviour.
+
+    Usage:
+        sa = ScatterAdd_cl(out_size, context=context)
+        sa.add(n_sri, N_ri, N_n)   # N_n updated in-place
+        sa.add(n_sri, D_ri, D_n)
+    """
+
+    _src = """
+    inline void atomic_addf(__global float *ptr, float delta) {
+        __global unsigned int *uptr = (__global unsigned int *)ptr;
+        unsigned int old_bits, new_bits;
+        do {
+            old_bits = *uptr;
+            new_bits = as_uint(as_float(old_bits) + delta);
+        } while (atomic_cmpxchg(uptr, old_bits, new_bits) != old_bits);
+    }
+
+    __kernel void scatter_add(
+        __global const int   *indices,
+        __global const float *weights,
+        __global       float *out,
+        const long start,
+        const long end
+    ) {
+        long gid    = get_global_id(0);
+        long stride = get_global_size(0);
+        for (long i = start + gid; i < end; i += stride)
+            atomic_addf(&out[indices[i]], weights[i]);
+    }
+    """
+
+    def __init__(self, out_size, context=None, workers_per_kernel=8):
+        max_cu = context.devices[0].max_compute_units
+        self.n_kernels       = max(1, max_cu // workers_per_kernel)
+        self.workers_per_kernel = workers_per_kernel
+        self.out_size        = out_size
+        self._accs           = np.zeros((self.n_kernels, out_size), dtype=np.float32)
+        self._queues         = [cl.CommandQueue(context)
+                                for _ in range(self.n_kernels)]
+        self._prog           = cl.Program(context, self._src).build()
+
+    def add(self, indices_2d, weights_2d, out):
+        """
+        indices_2d : int32 numpy array, shape (r_chunk, I)
+        weights_2d : float32 numpy array, shape (r_chunk, I)
+        out        : numpy array, shape (out_size,)  — updated in-place
+        """
+        idx = np.ascontiguousarray(indices_2d.ravel(), dtype=np.int32)
+        w   = np.ascontiguousarray(weights_2d.ravel(), dtype=np.float32)
+        N = idx.size
+        chunk = (N + self.n_kernels - 1) // self.n_kernels
+        self._accs[:] = 0.0
+
+        events = []
+        for k in range(self.n_kernels):
+            start = k * chunk
+            end   = min(start + chunk, N)
+            if start >= N:
+                break
+            events.append(cl.Kernel(self._prog, 'scatter_add')(
+                self._queues[k], (self.workers_per_kernel,), None,
+                cl.SVM(idx), cl.SVM(w), cl.SVM(self._accs[k]),
+                np.int64(start), np.int64(end)
+            ))
+
+        for e in events:
+            e.wait()
+
+        out += self._accs[:len(events)].sum(axis=0).astype(out.dtype)
+
 
 class Solve_axbc_cl():
 
@@ -467,3 +547,80 @@ class Solve_axbc_cl():
         flag[0] = 4;
         }
         """
+
+def get_fourier_gaussian_kernel(ctx, shape, sigma, factor=1.):
+    # Pre-calculate constants to pass as scalars
+    nz, ny, nx = shape
+    # Gaussian in Fourier space: G(u, v, w) = exp(-2 * pi^2 * sigma^2 * (u^2 + v^2 + w^2))
+    # where u, v, w are frequency coordinates from -0.5 to 0.5
+    scale = -2.0 * (np.pi ** 2) * (sigma ** 2)
+
+    return elwise.ElementwiseKernel(
+        ctx,
+        "cfloat_t *data",
+        f"""
+        // 1. Get 3D indices from global ID i
+        int z = i / ({nx} * {ny});
+        int y = (i / {nx}) % {ny};
+        int x = i % {nx};
+
+        // 2. Convert to frequency coordinates [-0.5, 0.5]
+        // This handles the fftshift logic implicitly
+        float u = (x < {nx//2}) ? (float)x / {nx} : (float)(x - {nx}) / {nx};
+        float v = (y < {ny//2}) ? (float)y / {ny} : (float)(y - {ny}) / {ny};
+        float w = (z < {nz//2}) ? (float)z / {nz} : (float)(z - {nz}) / {nz};
+
+        // 3. Calculate Gaussian term
+        float freq_sq = u*u + v*v + w*w;
+        float gaussian = {factor} * exp({scale} * freq_sq);
+
+        // 4. In-place multiply the Fourier-transformed data
+        data[i] = cfloat_rmul(gaussian, data[i]);
+        """,
+        "fourier_gaussian_multiplier",
+        preamble="#include <pyopencl-complex.h>",
+    )
+
+
+def crop_fft_indices_to_grid(raveled_fft_indices, original_shape, values):
+    """
+    Converts raveled FFT-shifted indices into native indices, crops to a
+    tight grid, and returns the result.
+
+    Args:
+        raveled_fft_indices: 1D array of indices from an fftshifted array
+        original_shape: Tuple (nz, ny, nx) of the full array
+        values: 1D array of values at those indices
+
+    Returns:
+        grid: Smallest 3D numpy array containing the values
+        offset: Tuple (z_min, y_min, x_min) in the full array
+    """
+    # 1. Unravel the indices to FFT-shifted (centered) coordinates
+    # These indices match a grid where zero-freq is at original_shape // 2
+    coords = np.array(np.unravel_index(raveled_fft_indices, original_shape))
+
+    # 2. Shift coordinates back to native (standard) NumPy indexing
+    # Standard order (np.fft.fft) expects zero at the beginning.
+    # We use (coord + (size + 1) // 2) % size to reverse the shift logic.
+    native_coords = []
+    for i, size in enumerate(original_shape):
+        shift = (size + 1) // 2
+        # Apply the circular shift to restore native 0-based indexing
+        native_coords.append((coords[i] + shift) % size)
+
+    native_coords = np.stack(native_coords, axis=-1)
+
+    # 3. Determine the bounding box in the native coordinate system
+    mins = native_coords.min(axis=0)
+    maxs = native_coords.max(axis=0)
+
+    # 4. Create the tightly cropped grid
+    new_shape = tuple(maxs - mins + 1)
+    grid = np.zeros(new_shape, dtype=values.dtype)
+
+    # 5. Fill the grid using local (cropped) coordinates
+    local_coords = native_coords - mins
+    grid[tuple(local_coords.T)] = values
+
+    return grid, tuple(mins)

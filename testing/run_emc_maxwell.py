@@ -89,8 +89,9 @@ refresh_config = False
 
 config_file = 'config.pickle'
 config_script = 'config.py'
+profile_dir = Path('profile')
 iters = 3
-beta_start = 0.1
+beta_start = 0.01
 # beta_start = 1.00
 beta_stop = 1.0
 
@@ -141,6 +142,7 @@ if rank == 0 and (restart or refresh_config):
 
 comm.Barrier()
 
+emc3.profiling.setup(profile_dir)
 config = pickle.load(open(config_file, 'rb'))
 
 Nframes = config['classes'][0]['data'].shape[0]
@@ -180,13 +182,16 @@ for i in range(iters):
         print(f'{rank=} {change=} {last_change=} {i=}')
         sys.stdout.flush()
 
+        """
         if change < 0.05 and last_change != (i - 1) and beta != beta_stop:
             beta *= 2
             last_change = i
 
         if beta == beta_stop and change < 0.05 and last_change != (i - 1):
             break
+        """
 
+    beta *= 2
     beta = min(beta, beta_stop)
 
     t0 = time()

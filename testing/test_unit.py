@@ -205,3 +205,79 @@ class TestProbability:
         P1 = _run_prob(D, R, logR.copy(), beta=1.0)
         P2 = _run_prob(D, R, logR.copy(), beta=1.0)
         np.testing.assert_allclose(P1, P2, rtol=1e-6)
+
+
+# ── ScatterAdd_cl ──────────────────────────────────────────────────────────────
+
+@pytest.fixture(scope='module')
+def cpu_cl():
+    from emc3.utils_cl import opencl_init_cpu
+    return opencl_init_cpu()
+
+
+class TestScatterAdd:
+    """ScatterAdd_cl must match np.bincount row-by-row reference."""
+
+    def _reference(self, indices_2d, weights_2d, out_size):
+        out = np.zeros(out_size, dtype=np.float64)
+        for r in range(indices_2d.shape[0]):
+            out += np.bincount(indices_2d[r], weights_2d[r].astype(float),
+                               minlength=out_size)
+        return out
+
+    def _make(self, cpu_cl, out_size):
+        from emc3.utils_cl import ScatterAdd_cl
+        return ScatterAdd_cl(out_size, context=cpu_cl['context'])
+
+    def test_basic_correctness(self, cpu_cl):
+        rng = np.random.default_rng(0)
+        out_size, R, I = 64, 16, 32
+        idx = rng.integers(0, out_size, (R, I), dtype=np.int32)
+        w   = rng.random((R, I)).astype(np.float32)
+
+        sa  = self._make(cpu_cl, out_size)
+        out = np.zeros(out_size, dtype=np.float64)
+        sa.add(idx, w, out)
+
+        ref = self._reference(idx, w, out_size)
+        np.testing.assert_allclose(out, ref, rtol=1e-5)
+
+    def test_accumulates_across_calls(self, cpu_cl):
+        rng = np.random.default_rng(1)
+        out_size, R, I = 32, 8, 20
+        idx = rng.integers(0, out_size, (R, I), dtype=np.int32)
+        w   = rng.random((R, I)).astype(np.float32)
+
+        sa  = self._make(cpu_cl, out_size)
+        out = np.zeros(out_size, dtype=np.float64)
+        sa.add(idx, w, out)
+        sa.add(idx, w, out)   # call twice — should double the result
+
+        ref = 2 * self._reference(idx, w, out_size)
+        np.testing.assert_allclose(out, ref, rtol=1e-5)
+
+    def test_large_r_chunk(self, cpu_cl):
+        rng = np.random.default_rng(2)
+        out_size, R, I = 512, 256, 128
+        idx = rng.integers(0, out_size, (R, I), dtype=np.int32)
+        w   = rng.random((R, I)).astype(np.float32)
+
+        sa  = self._make(cpu_cl, out_size)
+        out = np.zeros(out_size, dtype=np.float64)
+        sa.add(idx, w, out)
+
+        ref = self._reference(idx, w, out_size)
+        np.testing.assert_allclose(out, ref, rtol=1e-5)
+
+    def test_all_same_index(self, cpu_cl):
+        """All elements map to index 0 — maximum write contention."""
+        out_size, R, I = 16, 10, 10
+        idx = np.zeros((R, I), dtype=np.int32)
+        w   = np.ones((R, I), dtype=np.float32)
+
+        sa  = self._make(cpu_cl, out_size)
+        out = np.zeros(out_size, dtype=np.float64)
+        sa.add(idx, w, out)
+
+        assert out[0] == pytest.approx(R * I, rel=1e-5)
+        assert np.all(out[1:] == 0.0)

@@ -11,10 +11,12 @@ from pathlib import Path
 
 from . import utils_cl
 from . import utils
+from . import profiling
 from .tomograms import Tomograms, Tomograms_cl
 from .likelihood import Likelihood
 from .update_models import gpu_dot
 
+@profiling.timed
 def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
     """
     all in memory cpu + opencl process
@@ -47,9 +49,9 @@ def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
                 K_di,
                 W_ri,
                 cl['queue'], a_transp=False, b_transp=True)
-            evt.wait()
 
-            logR_dr[d0:d1, r0:r1] += logR_dr_dev.get()
+            with profiling.cl_timed('d2h', nbytes=logR_dr_dev.nbytes):
+                logR_dr[d0:d1, r0:r1] += logR_dr_dev.get()
             # print('K . W time:', time.time() - t0)
 
     t = time.time() - t0
@@ -60,6 +62,7 @@ def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
     return logR_dr, L.wsums_r, t
 
 
+@profiling.timed
 def calculate_logR_class_0_c(c, cl):
     if not c['update_logR']:
         return
@@ -129,18 +132,21 @@ use platform and device specified on command line for multi gpu
 """
 if __name__ == '__main__':
     import sys, pickle, h5py
+    from pathlib import Path
 
     config_fnam = sys.argv[1]
-    # class_id = int(sys.argv[2])
     class_ids = [int(c) for c in sys.argv[2].split(',')]
     device = int(sys.argv[3])
 
     config = pickle.load(open(config_fnam, 'rb'))
     wd = config['working_directory']
 
-    # load fluence
+    profiling.setup(Path(wd) / 'profile')
+
     with h5py.File(config['fluence_file']) as f:
         w_d = f['w_d'][()]
+
+    cl = utils_cl.opencl_init(device_no=device)
 
     dot_time = 0
     for class_id in class_ids:
@@ -149,26 +155,19 @@ if __name__ == '__main__':
         if not c['update_logR']:
             continue
 
-        # load model
-        with h5py.File(c['model_file']) as f:
-            c['model'].data = f['data'][()]
-
-        # set fluence
-        c['fluence'] = w_d
-
-        # load data
-        c['P_data'].load_from_file()
-
-        cl = utils_cl.opencl_init(device_no=device)
+        with profiling.cl_timed('io:load_data'):
+            with h5py.File(c['model_file']) as f:
+                c['model'].data = f['data'][()]
+            c['fluence'] = w_d
+            c['P_data'].load_from_file()
 
         logR_dr, wsums_r, t = calculate_logR_class_0_c(c, cl)
         dot_time += t
 
-        # save
-        with h5py.File(c['logR_file'], 'w') as f:
-            f['logR_dr'] = logR_dr
-
-        with h5py.File(c['P_wsums_file'], 'w') as f:
-            f['wsums_r'] = wsums_r
+        with profiling.cl_timed('io:save_logR'):
+            with h5py.File(c['logR_file'], 'w') as f:
+                f['logR_dr'] = logR_dr
+            with h5py.File(c['P_wsums_file'], 'w') as f:
+                f['wsums_r'] = wsums_r
 
     print('K . W time:', dot_time)

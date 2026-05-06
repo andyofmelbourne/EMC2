@@ -10,8 +10,10 @@ import subprocess
 
 from ..utils import solve_axbc
 from .. import utils_cl
+from .. import profiling
 from ..tomograms import Tomograms, Tomograms_cl
 
+@profiling.timed
 def _w_update(P_cdr, K_di, B_di, W_cri, Wsums_cr, d0, d1, update_b=False, w0_d=None):
     """
     P_cdr is chunked
@@ -172,6 +174,7 @@ def _w_update(P_cdr, K_di, B_di, W_cri, Wsums_cr, d0, d1, update_b=False, w0_d=N
         return w_d, None
 
 
+@profiling.timed
 def calculate_wsums_cl(
         mapper=None,
         model=None,
@@ -245,16 +248,17 @@ def w_update(config, config_file, update_b=False, p_per_device=16):
     D = config['classes'][0]['data'].shape[0]
     d0_d1_rank = []
     d0_d1 = []
-    for r, s in enumerate(np.array_split(np.arange(0, D), size)):
-        d00, d11 = s[0], s[-1]+1
+    for r, ds in enumerate(np.array_split(np.arange(0, D), size)):
+        d00, d11 = ds[0], ds[-1]+1
         d0_d1_rank.append([d00, d11])
 
         # str = '0-10000 10000-20000 20000-20323'
         d0_d1_str = []
-        for s in np.array_split(np.arange(d00, d11), nproc):
-            d0, d1 = s[0], s[-1]+1
-            d0_d1.append([d0, d1])
-            d0_d1_str.append('-'.join([str(d0), str(d1)]))
+        for ds_proc in np.array_split(np.arange(d00, d11), nproc):
+            if len(ds_proc)>0:
+                d0, d1 = ds_proc[0], ds_proc[-1]+1
+                d0_d1.append([d0, d1])
+                d0_d1_str.append('-'.join([str(d0), str(d1)]))
         d0_d1_str = ' '.join(d0_d1_str)
 
         if r == rank:
@@ -306,12 +310,15 @@ def w_update(config, config_file, update_b=False, p_per_device=16):
 
 
 if __name__ == '__main__':
+    from pathlib import Path
+
     config_fnam = sys.argv[1]
     d0, d1 = [int(c) for c in sys.argv[2].split('-')]
     device = int(sys.argv[3])
     update_b = sys.argv[4] == 'True'
 
     config = pickle.load(open(config_fnam, 'rb'))
+    profiling.setup(Path(config['working_directory']) / 'profile')
 
     cl = utils_cl.opencl_init()
 

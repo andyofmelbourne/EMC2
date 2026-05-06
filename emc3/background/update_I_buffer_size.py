@@ -5,6 +5,7 @@ from tqdm import tqdm
 from pathlib import Path
 
 from .. import utils_cl
+from .. import profiling
 from .. import symmetry
 from ..mapper import Mapper_cl_cpu_sparse
 
@@ -130,6 +131,8 @@ def update_buffer_size(config, config_file, p_per_device=2, cids=None):
 
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     config_fnam = sys.argv[1]
     cid = int(sys.argv[2])
     d0, d1 = [int(c) for c in sys.argv[3].split('-')]
@@ -137,6 +140,7 @@ if __name__ == "__main__":
     device = int(sys.argv[4])
 
     config = pickle.load(open(config_fnam, 'rb'))
+    profiling.setup(Path(config['working_directory']) / 'profile')
 
     c = config['classes'][cid]
 

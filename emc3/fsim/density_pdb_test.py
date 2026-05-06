@@ -2,6 +2,7 @@ from .refdata import cromer_mann_params
 import pyopencl as cl
 import prody
 import numpy as np
+import h5py
 
 
 def parse_pdb(pdb_fnam, biomol=True):
@@ -257,11 +258,11 @@ if __name__ == '__main__':
     cl_stuff = utils_cl.opencl_init()
 
     #N = 192
-    N = 256
+    N = 512
     i, j, k = np.indices((N, N, N))
 
     # inverse Angstroms
-    dq = 4 * 0.000270731 * 1e10
+    dq = 0.000270731 * 1e10
 
     out = sys.argv[1]+f'_dq_{dq}_N_{N}.pickle'
 
@@ -290,7 +291,11 @@ if __name__ == '__main__':
         'electron_density_fourier': F,
         'dq': dq,
     }
-    pickle.dump(t, open(out, 'wb'))
+    with h5py.File(out, 'w') as f:
+        f.create_dataset('electron_density_fourier', data=F, chunks=F.shape, compression='gzip')
+        f['dq'] = dq
+
+    #pickle.dump(t, open(out, 'wb'))
 
 
     """

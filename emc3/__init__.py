@@ -1,3 +1,4 @@
+from . import profiling
 from . import orientations
 from . import detector
 from . import data

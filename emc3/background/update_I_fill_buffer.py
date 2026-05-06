@@ -109,11 +109,12 @@ import pickle
 import subprocess
 
 from .. import utils_cl
+from .. import profiling
 from .update_I_buffer_size import get_sparse_P_matrix
 from ..utils import solve_axbc
 from .. import symmetry
 from ..mapper import Mapper_cl_cpu_sparse
-from ..update_models import apply_filter
+from ..update_models import finish_model
 
 import pyopencl as cl
 
@@ -248,6 +249,7 @@ class Fill_buffers():
         }
         """
 
+@profiling.timed
 def merge_I(c):
     cid = c['class_id']
 
@@ -275,66 +277,7 @@ def merge_I(c):
     for m_min, m_max, I in zip(m_mins, m_maxs, I_m):
         out_m[m_min: m_max] = I
 
-    sym = symmetry.Symmetry(
-        c['model'].shape[0]//2,
-        c['model'].shape,
-        symmetry=c['model'].symmetry
-    )
-
-    n_asy = sym.get_asymmetric_unit()
-
-    # apply symmetry to model
-    shape = c['model'].shape
-    out_n = np.zeros(np.prod(shape), dtype=float)
-    out_n[n_asy] = out_m
-
-    out_n = sym.apply_symmetry(out_n.reshape(shape))
-
-    O_n = np.zeros(out_n.size, dtype=int)
-    O_n[n_asy] = 1
-    O_n = sym.apply_symmetry(O_n.reshape(shape))
-    O_n[O_n == 0] = 1
-    out_n /= O_n
-
-    I_n = out_n
-
-    m = I_n == 0.
-
-    with h5py.File(c['model_file']) as f:
-        data = f['data']
-        dq = f['dq'][()]
-        I0_n = None
-        if data.shape == I_n.shape:
-            if dq == c['model'].dq:
-                I0_n = data[()]
-
-    if c['filter_model']:
-        t = I_n.copy()
-        if I0_n is not None:
-            t[m] = I0_n[m]
-
-        for i in range(4):
-            t[~m] = I_n[~m]
-            t = apply_filter(c['model'].dq, t, c['filter_model'])
-
-        I_n = t
-
-    if I0_n is not None:
-        rms = np.mean((I0_n - I_n)**2)**0.5
-        print(f'rms difference for model {cid}: {rms}')
-        print(f'{cid}: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
-
-    # don't know why but sometimes a pixel or two is nan
-    m = np.isnan(I_n)
-    I_n[m] = 1e-8
-
-    # save
-    with h5py.File(c['model_file'], 'w') as f:
-        f['data'] = I_n
-        f['dq'] = c['model'].dq
-
-    print(f'{cid}: saved exiting merge')
-    sys.stdout.flush()
+    return out_m, np.ones_like(out_m)
 
 
 def fill_buffer(config, config_file, cids=None):
@@ -413,18 +356,23 @@ def fill_buffer(config, config_file, cids=None):
         if not c['update_model']:
             continue
 
-        merge_I(c)
+        N_m, D_m = merge_I(c)
+
+        # finish and save model
+        profiling.setup(Path(config['working_directory']) / 'profile')
+        I_n = finish_model(N_m, D_m, c, profiling, is_asymmetric_unit=True)
 
     print(f'{cids_str}: fill buffer done exiting')
     sys.stdout.flush()
 
 if __name__ == "__main__":
+    from pathlib import Path
+
     m_min, m_max, ci, device, config_file = sys.argv[1:]
     m_min, m_max, ci, device = int(m_min), int(m_max), int(ci), int(device)
 
-    # prepare data
-    # ------------
     config = pickle.load(open(config_file, 'rb'))
+    profiling.setup(Path(config['working_directory']) / 'profile')
 
     c = config['classes'][ci]
 

@@ -65,15 +65,15 @@ class Tomograms_cl():
             global float4 *r_i,
             global float4 *M_r,
             global float *C_i,
-            const int r_offset
+            const long r_offset
         )
         {{
-            int r = get_global_id(1);
-            int i = get_global_id(0);
-            int R = get_global_size(1);
-            int I = get_global_size(0);
+            long r = get_global_id(1);
+            long i = get_global_id(0);
+            long R = get_global_size(1);
+            long I = get_global_size(0);
 
-            int base = 4 * (r + r_offset);
+            long base = 4 * (r + r_offset);
 
             float4 v = r_i[i];
 
@@ -105,12 +105,12 @@ class Tomograms_cl():
             global int *is
         )
         {{
-            int r = get_global_id(1);
-            int i = get_global_id(0);
-            int R = get_global_size(1);
-            int I = get_global_size(0);
+            long r = get_global_id(1);
+            long i = get_global_id(0);
+            long R = get_global_size(1);
+            long I = get_global_size(0);
 
-            int base = 4 * rs[r];
+            long base = 4 * rs[r];
 
             float4 v = r_i[is[i]];
 
@@ -211,7 +211,7 @@ class Tomograms_cl():
             self.r_cl,
             self.M_cl,
             self.C_cl,
-            np.int32(r0)
+            np.int64(r0)
         )
 
         if cpu:

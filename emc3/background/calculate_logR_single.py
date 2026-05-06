@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from .. import utils_cl
 from .. import utils
+from .. import profiling
 from ..tomograms import Tomograms, Tomograms_cl
 from ..likelihood import Likelihood
 from ..update_models import gpu_dot
@@ -22,6 +23,7 @@ from ..data import BackCXI
 from .frames import Frames, Frames_cl, Calc_logR, Calc_logR_back_fluence_free
 
 
+@profiling.timed
 def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_size=256):
     """
     all in memory cpu + opencl process
@@ -70,6 +72,7 @@ def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_si
     return logR_dr, t
 
 
+@profiling.timed
 def calculate_logR_class_0_cpu(K_di, frames, cl, cl_cpu, r0, r1, d_chunk_size=1024, r_chunk_size=1024, fluence_free=False):
     """
     all in memory cpu + opencl process
@@ -122,6 +125,7 @@ def calculate_logR_class_0_cpu(K_di, frames, cl, cl_cpu, r0, r1, d_chunk_size=10
     return logR_dr, t
 
 
+@profiling.timed
 def calculate_logR_class_0_c(c, cl, cl_cpu, r0=None, r1=None):
     if not c['update_logR']:
         return
@@ -237,6 +241,7 @@ use platform and device specified on command line for multi gpu
 """
 if __name__ == '__main__':
     import sys, pickle, h5py
+    from pathlib import Path
 
     config_fnam = sys.argv[1]
     ci = int(sys.argv[2])
@@ -244,32 +249,30 @@ if __name__ == '__main__':
     device = int(sys.argv[4])
 
     config = pickle.load(open(config_fnam, 'rb'))
+    wd = config['working_directory']
+
+    profiling.setup(Path(wd) / 'profile')
 
     c = config['classes'][ci]
     class_id = c['class_id']
 
-    dot_time = 0
-
     if not c['update_logR']:
         sys.exit()
 
-    # load model
-    with h5py.File(c['model_file']) as f:
-        c['model'].data = f['data'][()]
-
-    # load data
-    c['P_data'].load_from_file()
+    with profiling.cl_timed('io:load_data'):
+        with h5py.File(c['model_file']) as f:
+            c['model'].data = f['data'][()]
+        c['P_data'].load_from_file()
 
     cl = utils_cl.opencl_init(device_no=device)
     cl_cpu = utils_cl.opencl_init_cpu()
 
     logR_dr, t = calculate_logR_class_0_c(c, cl, cl_cpu, r0=r0, r1=r1)
-    dot_time += t
 
-    # save
-    fnam = f'class_logR_chunk_{class_id}_{r0}_{r1}.h5'
-    with h5py.File(fnam, 'w') as f:
-        f['logR_dr'] = logR_dr
-        f['r0'] = r0
-        f['r1'] = r1
+    with profiling.cl_timed('io:save_logR'):
+        fnam = f'class_logR_chunk_{class_id}_{r0}_{r1}.h5'
+        with h5py.File(fnam, 'w') as f:
+            f['logR_dr'] = logR_dr
+            f['r0'] = r0
+            f['r1'] = r1
 

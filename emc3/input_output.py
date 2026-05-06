@@ -4,6 +4,8 @@ import h5py
 import logging
 import numpy as np
 
+from . import profiling
+
 logger = logging.getLogger(__name__)
 
 def get_option(d, thing):
@@ -86,6 +88,7 @@ def write_h5(f, k, v, compression=True, chunks=None):
                 chunks = v.shape
             f.create_dataset(k, data=v, chunks=chunks, compression=compression)
 
+@profiling.timed
 def save_iteration_info(stats, working_directory):
     """
     Write per-iteration statistics to iteration_info.h5.
@@ -188,6 +191,7 @@ def save_iteration_info(stats, working_directory):
     }
 
 
+@profiling.timed
 def save_output(config):
     """
     Save per-iteration model slices and data info to iteration_info.h5.

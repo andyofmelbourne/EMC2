@@ -79,6 +79,7 @@ from time import time
 from . import symmetry
 from . import utils
 from . import utils_cl
+from . import profiling
 from .tomograms import Tomograms, Tomograms_cl
 from .mapper import Mapper_cl
 from .dot import AdotB
@@ -88,6 +89,132 @@ import pyopencl.array as cl_array
 import pyclblast
 
 import os
+
+
+
+def models_no_nan(I_n):
+    """
+    ensure non-negativity and finite values
+    """
+    I_n = np.nan_to_num(I_n, copy=False, nan=1e-8)
+    I_n = np.clip(I_n, 0, None)
+    return I_n
+
+def models_apply_sym(N_in_n, D_in_n, model, is_asymmetric_unit=False):
+    """
+    apply symmetry to numerator (N_n) and denominator (D_n)
+    then divide the two unless the symmeterised D_n == 0
+    """
+    sym = symmetry.Symmetry(
+        model.i0,
+        model.shape,
+        model.symmetry
+    )
+
+    if is_asymmetric_unit:
+        n_asy = sym.get_asymmetric_unit()
+        N_n = np.zeros(np.prod(model.shape), dtype=float)
+        N_n[n_asy] = N_in_n
+
+        D_n = np.zeros_like(N_n)
+        D_n[n_asy] = D_in_n
+    else:
+        N_n = N_in_n
+        D_n = D_in_n
+
+    N_n = sym.apply_symmetry(
+        N_n.reshape(model.shape),
+    )
+
+    D_n = sym.apply_symmetry(
+        D_n.reshape(model.shape),
+    )
+
+    # I = N / D
+
+    # in case background subtraction
+    # gives -ve's
+    N_n = np.clip(N_n, 0, None)
+
+    m = D_n == 0
+    D_n[m] = 1.
+    N_n /= D_n
+    return N_n
+
+
+def apply_filter(I_n, I0_n, dq, filter_size):
+    m = I_n == 0
+
+    if filter_size:
+        t = I_n.copy()
+        if I0_n is not None:
+            if I0_n.shape == N_n.shape:
+                t[m] = I0_n[m]
+
+        for i in range(3):
+            t[~m] = I_n[~m]
+            t = _apply_filter(dq, t, filter_size)
+
+        I_n = t
+    return I_n
+
+def model_rms(I_n, I0_n):
+    if I0_n is not None:
+        rms = np.mean((I0_n - I_n)**2)**0.5
+    return rms
+
+def limit_change(I_n, I0_n, max_change):
+    """
+    out = I0_n + max_change (I_n - I0_n)
+    """
+    if I0_n is None or not max_change:
+        return I_n
+
+    return I0_n + max_change * (I_n - I0_n)
+
+
+def finish_model(N_n, D_n, c, profiling, is_asymmetric_unit=False):
+    """
+    1. apply voxel perfect symmetry
+    2. filter with autoc
+    3. ensure non-negative finite
+    4. get rms
+    5. restrict change
+    """
+    filter_model = c.get('filter_model', None)
+    model_max_change = c.get('model_max_change', None)
+    model = c['model']
+
+    # get old model if shape and dq match
+    # -----------------------------------
+    with h5py.File(c['model_file']) as f:
+        data = f['data']
+        dq = f['dq'][()]
+        I0_n = None
+        if data.shape == model.shape:
+            if dq == model.dq:
+                I0_n = data[()]
+
+    N_n = models_no_nan(N_n)
+    D_n = models_no_nan(D_n)
+
+    I_n = models_apply_sym(N_n, D_n, model, is_asymmetric_unit)
+    I_n = apply_filter(I_n, I0_n, model.dq, filter_model)
+    I_n = limit_change(I_n, I0_n, model_max_change)
+    rms = model_rms(I_n, I0_n)
+
+    cid = c['class_id']
+    print(f'rms difference for model {cid}: {rms}')
+    print(f'{cid}: {np.mean(I0_n)=} --> {np.mean(I_n)=}')
+
+    # save model to disk
+    with profiling.cl_timed('io:save_model'):
+        with h5py.File(c['model_file'], 'w') as f:
+            f['data'] = I_n
+            f['dq'] = c['model'].dq
+
+    return I_n
+
 
 
 def gpu_dot(A, B, queue, a_transp=False, b_transp=False):
@@ -114,29 +241,30 @@ def gpu_dot(A, B, queue, a_transp=False, b_transp=False):
     assert(np.issubdtype(B.dtype, np.float32))
 
     C = np.zeros((m, n), dtype=np.float32)
-    A_dev = cl_array.to_device(queue, A)      # cl_array.Array; has .dtype
-    B_dev = cl_array.to_device(queue, B)
-    C_dev = cl_array.to_device(queue, C)      # or cl_array.empty(queue, (m,n), dtype=np.float32)
 
-    # Call pyclblast.gemm using your version's signature:
-    # gemm(queue, m, n, k, a, b, c, a_ld, b_ld, c_ld, ...)
-    evt = pyclblast.gemm(
-        queue,
-        m, n, k, # (m, n) = (m, k) . (k, n)
-        A_dev, B_dev, C_dev,
-        a_ld, b_ld, c_ld, # a_ld = k, b_ld = n, c_ld = n (row-major)
-        alpha=1.0,
-        beta=0.0,
-        a_transp=a_transp,
-        b_transp=b_transp
-    )
+    with profiling.cl_timed('h2d', nbytes=A.nbytes + B.nbytes):
+        A_dev = cl_array.to_device(queue, A)
+        B_dev = cl_array.to_device(queue, B)
+        C_dev = cl_array.to_device(queue, C)
+        queue.finish()
 
-    # evt.wait()
-    # C_res = C_dev.get()
+    with profiling.cl_timed('gemm', m=m, n=n, k=k):
+        evt = pyclblast.gemm(
+            queue,
+            m, n, k,
+            A_dev, B_dev, C_dev,
+            a_ld, b_ld, c_ld,
+            alpha=1.0,
+            beta=0.0,
+            a_transp=a_transp,
+            b_transp=b_transp
+        )
+        evt.wait()
+
     return C_dev, evt
 
 
-def apply_filter(dq, I_n, size):
+def _apply_filter(dq, I_n, size):
     """
     apply soft Fourier low-pass filter
     with 2xsize width
@@ -172,7 +300,7 @@ class Update_model_class():
     7. apply symmetry
     """
 
-    def __init__(self, w_d, c, cl=None, r_chunk_size=1024, d_chunk_size=1024):
+    def __init__(self, w_d, c, cl=None, cl_cpu=None, r_chunk_size=1024, d_chunk_size=1024):
         self.wsums_r = c['wsums_r']
         self.w_d = w_d
         self.C_i = c['data'].C_i
@@ -182,6 +310,7 @@ class Update_model_class():
         self.maximise = c['maximise']
         self.model = c['model']
         self.filter = c.get('filter_model', None)
+        self.c = c
 
         # determine offset calculation
         # ----------------------------
@@ -230,6 +359,9 @@ class Update_model_class():
         if cl is None:
             cl = utils_cl.opencl_init()
 
+        if cl_cpu is None:
+            cl_cpu = utils_cl.opencl_init_cpu()
+
         self.queue = cl['queue']
 
         self.mapper_cl = Mapper_cl(
@@ -241,7 +373,13 @@ class Update_model_class():
                 r_chunk_size=self.r_chunk_size,
                 ravel=True)
 
+        self.scatter_add = utils_cl.ScatterAdd_cl(
+                self.model.size,
+                context=cl_cpu['context'])
 
+        self.c = c
+
+    @profiling.timed
     def calculate(self):
         N_n = np.zeros(self.model.size, dtype=float)
         D_n = np.zeros(self.model.size, dtype=float)
@@ -252,7 +390,7 @@ class Update_model_class():
             # 3. calculate P . K
             # ------------------
             self.N_ri = np.zeros((dr, self.I), dtype=np.float32)
-            for d0, d1, dr in utils.chunker(self.d_chunk_size, self.D):
+            for d0, d1, _ in utils.chunker(self.d_chunk_size, self.D):
                 # t0 = time()
                 # self.N_ri = self.PdotK()
                 P_dr = self.P_dr[d0:d1, r0:r1].astype(np.float32)
@@ -268,8 +406,10 @@ class Update_model_class():
                 self.N_ri += N_ri_dev.get()
                 """
                 # test np
+                t0 = time()
                 N_ri_dev = np.dot(P_dr.T, K_di)
                 self.N_ri += N_ri_dev
+                print(f'np.dot(P_dr.T, K_di) {r0=} {r1=} {d1-d0=} dot time:', time() - t0)
 
                 # assert(np.allclose(N_ri, self.N_ri))
                 # print(f'P dot K time:', time() - t0)
@@ -282,12 +422,14 @@ class Update_model_class():
             # ----------------------
             if self.background:
                 self.N_ri -= self.B_i[None, :] * np.dot(self.b_d, self.P_dr[:, r0:r1])[:, None]
+                print(f'applied background offset to N_Ri')
 
             # -----------------
             # 4. calculate D_ri
             # -----------------
             # t0 = time()
             D_ri = self._calc_D(r0, r1)
+            print(f'applied offset to D_ri')
             # print(f'D_ri time:', time() - t0)
 
             if self.maximise == 'W':
@@ -303,62 +445,18 @@ class Update_model_class():
                 n_sri = self.mapper_cl.calculate_mapping(
                         s, r0, r1, ravel=True, cpu=True)
                 mtime += time() - t0
+                print(f'mapping time:', time() - t0)
 
                 t0 = time()
-                for r in range(n_sri.shape[0]):
-                    N_n += np.bincount(
-                        n_sri[r],
-                        self.N_ri[r],
-                        minlength=self.model.size
-                    )
-
-                    D_n += np.bincount(
-                        n_sri[r],
-                        D_ri[r],
-                        minlength=self.model.size
-                    )
+                self.scatter_add.add(n_sri, self.N_ri, N_n)
+                self.scatter_add.add(n_sri, D_ri,      D_n)
+                print(f'bincount time:', time() - t0)
                 btime += time() - t0
 
-            # print(f'mapping time:', mtime)
-            # print(f'bincount time:', btime)
+            print(f'mapping time:', mtime)
+            print(f'bincount time:', btime)
 
-        sym = symmetry.Symmetry(
-                self.model.i0,
-                self.model.shape,
-                self.model.symmetry
-        )
-
-        N_n = sym.apply_symmetry(
-            N_n.reshape(self.model.shape),
-        )
-
-        D_n = sym.apply_symmetry(
-            D_n.reshape(self.model.shape),
-        )
-
-        # I = N / D
-
-        # in case background subtraction
-        # gives -ve's
-        N_n = np.clip(N_n, 0, None)
-
-        m = D_n == 0
-        D_n[m] = 1.
-        N_n /= D_n
-
-        if self.filter is not None:
-            t = N_n.copy()
-            if self.model.data is not None:
-                if self.model.data.shape == N_n.shape:
-                    t[m] = self.model.data[m]
-
-            for i in range(3):
-                t[~m] = N_n[~m]
-                t = apply_filter(self.model.dq, t, self.filter)
-
-            N_n = t
-
-        return N_n
+        return N_n, D_n
 
     def _calc_CP(self, r0=0, r1=None):
         if r1 is None:
@@ -405,6 +503,9 @@ class Update_model_class():
         #D_ri = self.C_i[None, :] * \
         #    np.dot(self.K_d, self.P_dr[:, r0:r1])[:, None]
         return D_ri
+
+
+@profiling.timed
 def calculate_fluence(config):
     D = config['classes'][0]['data'].shape[0]
     K_d = config['classes'][0]['data'].data_sum
@@ -412,7 +513,7 @@ def calculate_fluence(config):
     # only works globally!
     if config['classes'][0]['frame_model'] == 'background':
         B_d = config['classes'][0]['data'].B_di.data_sum
-        K_d = K_d.copy() - B_d
+        K_d = np.clip(K_d.copy() - B_d, B_d+1, None)
         assert (np.all(K_d > 0))
 
     w_d = np.zeros((D,), dtype=float)
@@ -449,6 +550,7 @@ def calculate_wsums(
     return wsums_r
 
 
+@profiling.timed
 def calculate_wsums_cl(
         likelihood=None,
         frame_model=None,
@@ -588,6 +690,7 @@ use platform and device specified on command line for multi gpu
 """
 if __name__ == '__main__':
     import sys, pickle, h5py
+    from pathlib import Path
 
     config_fnam = sys.argv[1]
     class_ids = [int(c) for c in sys.argv[2].split(',')]
@@ -596,11 +699,14 @@ if __name__ == '__main__':
     config = pickle.load(open(config_fnam, 'rb'))
     wd = config['working_directory']
 
-    # load fluence
+    profiling.setup(Path(wd) / 'profile')
+
     with h5py.File(config['fluence_file']) as f:
         w_d = f['w_d'][()]
 
+    print(f'initialising opencl')
     cl = utils_cl.opencl_init(device_no=device)
+    cl_cpu = utils_cl.opencl_init_cpu()
 
     for class_id in class_ids:
         c = config['classes'][class_id]
@@ -608,33 +714,23 @@ if __name__ == '__main__':
         if not c['update_model']:
             continue
 
-        # load data
-        c['data'].load_from_file()
-
-        # load model
-        with h5py.File(c['model_file']) as f:
-            c['model'].data = f['data'][()]
-
-        # load prob
-        with h5py.File(c['probability_matrix_file']) as f:
-            c['P_dr'] = f['P_dr'][()]
-
-        # load wsums
-        with h5py.File(c['wsums_file']) as f:
-            c['wsums_r'] = f['wsums_r'][()]
-
-        c['mapper'].load_coords(c['data'].mask)
+        with profiling.cl_timed('io:load_data'):
+            print(f'initialising mapper {class_id=}')
+            c['data'].load_from_file()
+            with h5py.File(c['model_file']) as f:
+                c['model'].data = f['data'][()]
+            with h5py.File(c['probability_matrix_file']) as f:
+                c['P_dr'] = f['P_dr'][()]
+            with h5py.File(c['wsums_file']) as f:
+                c['wsums_r'] = f['wsums_r'][()]
+            c['mapper'].load_coords(c['data'].mask)
 
         t0 = time()
-        mupdate = Update_model_class(w_d, c, cl, r_chunk_size=4*1024, d_chunk_size=4*1024)
-
-        I = mupdate.calculate()
-
-        c['model'].data = I
+        print(f'setting up model update {class_id=}')
+        mupdate = Update_model_class(w_d, c, cl, cl_cpu, r_chunk_size=4*1024, d_chunk_size=4*1024)
+        print(f'calling model update {class_id=}')
+        N_n, D_n = mupdate.calculate()
         print(f'update time:', time() - t0)
 
-        # save
-        with h5py.File(c['model_file'], 'w') as f:
-            f['data'] = c['model'].data
-            f['dq'] = c['model'].dq
-
+        # finish and save model
+        I_n = finish_model(N_n, D_n, c, profiling)

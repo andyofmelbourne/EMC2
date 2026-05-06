@@ -28,11 +28,7 @@ def update_I(config_file, config, iters=1, update_w_first=False, update_w=True, 
 
         fill_buffer(config, config_file, cids=cids)
 
-        print(f'\n{rank=} waiting at barrier\n')
-        sys.stdout.flush()
         comm.Barrier()
-        print(f'\n{rank=} passing barrier\n')
-        sys.stdout.flush()
 
         if update_w:
             w_update(config, config_file, update_b=update_b)

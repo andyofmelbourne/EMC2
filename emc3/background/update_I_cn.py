@@ -69,6 +69,7 @@ which will be a very large dataset (2D-EMC) ~ 10 Gb
 import numpy as np
 from .. import utils_cl
 from .. import utils
+from .. import profiling
 from ..mapper import Mapper_cl
 
 import pyopencl as cl
@@ -80,6 +81,7 @@ import pickle
 from time import time, sleep
 
 # this should be chunked over r, not d
+@profiling.timed
 def _calculate_c_n(w_d, P_dr, M_sri, C_i, N, queue, context):
     """
     c_n = C_i_n sum_d (w_d P_dr_n)
@@ -194,10 +196,13 @@ def calculate_c_n(config, config_file, cids=None):
 
 
 if __name__ == '__main__':
+    from pathlib import Path
+
     config_fnam = sys.argv[1]
     cid = int(sys.argv[2])
 
     config = pickle.load(open(config_fnam, 'rb'))
+    profiling.setup(Path(config['working_directory']) / 'profile')
 
     cl_gpu = utils_cl.opencl_init()
     cl_cpu = utils_cl.opencl_init_cpu()

@@ -8,6 +8,7 @@ from tqdm import tqdm
 from .utils_cl import opencl_init_cpu
 from .utils import chunker
 from . import input_output
+from . import profiling
 
 from scipy.ndimage import gaussian_filter1d
 
@@ -138,6 +139,7 @@ class Probability():
         self.cl_cpu_code = cl.Program(self.context, cl_code).build()
         self.normalise_P_dr = cl.Kernel(self.cl_cpu_code, "normalise_P_dr")
 
+    @profiling.timed
     def calculate(self, P_dr, logR_dr, d00, d11):
         """
         d00 and d11 are global indices
@@ -360,13 +362,14 @@ def keep_n_frames(P_dr, config):
         f = config[key]
         p = (1-f/R)*100
         thresh_d = np.percentile(P_dr, p, axis=1)
-        m = P_dr > thresh_d[:, None]
+        m = P_dr >= thresh_d[:, None]
         P_dr *= m
 
         # renormalise
         P_dr /= np.sum(P_dr, axis=1)[:, None]
 
 
+@profiling.timed
 def calculate_P(config, beta):
     """
     calculate P_dr from logR_dr in d-chunks
