@@ -13,6 +13,7 @@ from .emc_scat_widget import EMC_scatter_widget
 from .getters import DataGetter_h5, GeomGetterCXI_h5, GeomGetterSparseCXI_h5
 
 from .show_fit_widget import plugin
+from .orientation_widget import OrientationCoverageWidget
 
 class Iteration_gui(Model_slice_widget):
     def __init__(self, directory, parent=None):
@@ -57,6 +58,24 @@ class Iteration_gui(Model_slice_widget):
 
         self.scat_widget.iterationChanged.connect(
                 lambda x: self.update_plots(key=x)
+                )
+
+        # orientation coverage in separate window
+        # ----------------------------------------
+        self.orientation_widget = OrientationCoverageWidget(directory,
+                                                            parent=None)
+        self.orientation_window = QMainWindow(parent=self)
+        self.orientation_window.setWindowTitle('Orientation coverage')
+        self.orientation_window.setCentralWidget(self.orientation_widget)
+        self.orientation_widget.setParent(self.orientation_window)
+        self.orientation_window.resize(700, 400)
+        self.orientation_window.show()
+
+        self.iterationChanged.connect(
+                lambda x: self.orientation_widget.update(x)
+                )
+        self.scat_widget.iterationChanged.connect(
+                lambda x: self.orientation_widget.update(x)
                 )
 
         # show selected frames on signal

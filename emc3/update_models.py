@@ -136,10 +136,13 @@ def models_apply_sym(N_in_n, D_in_n, model, is_asymmetric_unit=False):
     # gives -ve's
     N_n = np.clip(N_n, 0, None)
 
+    N_sym = N_n.copy()
+    D_sym = D_n.copy()
+
     m = D_n == 0
     D_n[m] = 1.
     N_n /= D_n
-    return N_n
+    return N_n, N_sym, D_sym
 
 
 def apply_filter(I_n, I0_n, dq, filter_size):
@@ -198,7 +201,7 @@ def finish_model(N_n, D_n, c, profiling, is_asymmetric_unit=False):
     N_n = models_no_nan(N_n)
     D_n = models_no_nan(D_n)
 
-    I_n = models_apply_sym(N_n, D_n, model, is_asymmetric_unit)
+    I_n, N_sym, D_sym = models_apply_sym(N_n, D_n, model, is_asymmetric_unit)
     I_n = apply_filter(I_n, I0_n, model.dq, filter_model)
     I_n = limit_change(I_n, I0_n, model_max_change)
     rms = model_rms(I_n, I0_n)
@@ -212,6 +215,8 @@ def finish_model(N_n, D_n, c, profiling, is_asymmetric_unit=False):
         with h5py.File(c['model_file'], 'w') as f:
             f['data'] = I_n
             f['dq'] = c['model'].dq
+            f['N_n'] = N_sym
+            f['D_n'] = D_sym
 
     return I_n
 

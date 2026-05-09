@@ -165,7 +165,8 @@ def save_iteration_info(stats, working_directory):
         if N > 0:
             prev = f[f'iteration_{N-1}']
 
-            dQ = float(np.mean(Q_old_d - prev['Q_d'][()]))
+            D = min(Q_old_d.shape[0], prev['Q_d'].shape[0])
+            dQ = float(np.mean(Q_old_d[:D] - prev['Q_d'][:D]))
             f['dQ'][N] = dQ
 
             mlm_prev = prev['most_likely_model_d'][()]

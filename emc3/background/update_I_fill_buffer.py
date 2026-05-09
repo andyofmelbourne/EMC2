@@ -170,7 +170,10 @@ class Fill_buffers():
         # a_j = P_dr K_di         for i in M_rn and for non-zero elements
         # b_j = B_di / (w_d C_i)  for above elements
 
-        M_sri = np.ascontiguousarray(self.M_n[N_sri].astype(np.int32))
+        valid = N_sri >= 0
+        M_sri = np.ascontiguousarray(
+            np.where(valid, self.M_n[np.where(valid, N_sri, 0)], -1).astype(np.int32)
+        )
 
         if not self.checked:
             assert(P_r.dtype == np.float32)

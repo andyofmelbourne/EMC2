@@ -146,7 +146,7 @@ class SSH_emc(SSH):
         args = (
                 '--exclude *.swp --exclude .git/ '
                 '--exclude tests --exclude .gitignore '
-                '--exclude *.pyc'
+                '--exclude *.pyc --exclude testing'
                 )
         args = args.split(' ')
 

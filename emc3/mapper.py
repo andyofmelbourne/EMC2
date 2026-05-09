@@ -15,7 +15,7 @@ def calculate_mapping_matrix(dimensions, wav, dq, rotation_order, i0,
           = M_sr(r_i)
 
     where:
-    A_sr = scale_r S_s . R_r / wav dq
+    A_sr = scale_r . S_s . R_r / wav dq
     b_sr = - (A_sr . (0, 0, 1) + i0)
 
     n_sri = A_sr . rh_ri + b_sr
@@ -52,10 +52,14 @@ def calculate_mapping_matrix(dimensions, wav, dq, rotation_order, i0,
             [a10 a11 0   b1]
             [0   0   0   0 ]
             [drx dry drz 1 ]
+
+    allow scale/s to be a length 3 list or a scalar
+    if it is a length 3 list then scale each axis accordingly
     """
     R_l = orientations.get_rotation_matrices(
             rotation_order=rotation_order,
-            dimensions=dimensions)
+            dimensions=dimensions,
+            symmetry_str=symmetry)
 
     # get symmetry opperators
     S_s = sym.get_non_voxel_operators(dimensions, symmetry)
@@ -68,13 +72,30 @@ def calculate_mapping_matrix(dimensions, wav, dq, rotation_order, i0,
 
     d = dimensions
 
+    # global or per axis scale or arb. transform
+    scale2 = []
+    for i, t in enumerate(scale):
+        # global scale
+        if np.ndim(t) == 0:
+            tout = t * np.eye(d)
+        # per-axis scale
+        elif np.ndim(t) == 1 and len(t) == d:
+            tout = np.diag(t)
+        # arb. transform
+        elif np.ndim(t) == 2 and np.shape(t) == (d,d):
+            tout = np.array(t)
+        else:
+            err = f'{scale[i]=} not supported! Must be scalar len 3 (2) array-like or 3x3 (2x2) array-like'
+            raise ValueError(err)
+        scale2.append(tout)
+
     # loop over symmetry ops
     for s in range(S):
         # loop over offsets
         for j in range(J):
             # loop over scales
             for k in range(K):
-                A = scale[k] * S_s[s] @ R_l / (wav * dq)
+                A = scale2[k] @ S_s[s] @ R_l / (wav * dq)
 
                 if d == 2:
                     b = i0 - np.array([0, 0, 1])
@@ -287,18 +308,23 @@ class Mapper_cl():
             out_vec_type='float2'
             out_vec = '(float2)(r0, r1)'
             out_ravel_type='int'
-            out_ravel = f'{N} * convert_int_rte(r0) + convert_int_rte(r1)'
+            out_ravel = (
+                f'(convert_int_rte(r0) >= 0 && convert_int_rte(r0) < {N}'
+                f' && convert_int_rte(r1) >= 0 && convert_int_rte(r1) < {N})'
+                f' ? {N}*convert_int_rte(r0) + convert_int_rte(r1) : -1'
+            )
 
         elif mapper.dimensions == 3:
             out_vec_type='float4'
             out_vec = '(float4)(r0, r1, r2, (float)0.0)'
             out_ravel_type='int'
-            out_ravel = f'{N} * {N} * convert_int_rte(r0) +\
-                    {N} * convert_int_rte(r1) + convert_int_rte(r2)'
-
-            # test
-            # out_ravel = f'convert_int_rte(r0)'
-            # out_ravel = f'convert_int_rte(v.w)'
+            out_ravel = (
+                f'(convert_int_rte(r0) >= 0 && convert_int_rte(r0) < {N}'
+                f' && convert_int_rte(r1) >= 0 && convert_int_rte(r1) < {N}'
+                f' && convert_int_rte(r2) >= 0 && convert_int_rte(r2) < {N})'
+                f' ? {N}*{N}*convert_int_rte(r0) + {N}*convert_int_rte(r1) + convert_int_rte(r2)'
+                f' : -1'
+            )
 
         self.code_vec = cl.Program(
             context,

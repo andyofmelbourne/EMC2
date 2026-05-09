@@ -262,7 +262,8 @@ class Bincount_cl():
             const  int N
         ) {
         for (int n=0; n<N; n++){
-            out[array[n]] += 1;
+            if (array[n] >= 0)
+                out[array[n]] += 1;
         }
         }
         """
@@ -303,12 +304,15 @@ class ScatterAdd_cl():
     ) {
         long gid    = get_global_id(0);
         long stride = get_global_size(0);
-        for (long i = start + gid; i < end; i += stride)
-            atomic_addf(&out[indices[i]], weights[i]);
+        for (long i = start + gid; i < end; i += stride) {
+            int idx = indices[i];
+            if (idx >= 0)
+                atomic_addf(&out[idx], weights[i]);
+        }
     }
     """
 
-    def __init__(self, out_size, context=None, workers_per_kernel=8):
+    def __init__(self, out_size, context=None, workers_per_kernel=4):
         max_cu = context.devices[0].max_compute_units
         self.n_kernels       = max(1, max_cu // workers_per_kernel)
         self.workers_per_kernel = workers_per_kernel

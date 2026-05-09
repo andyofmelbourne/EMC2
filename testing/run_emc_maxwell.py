@@ -90,11 +90,13 @@ refresh_config = False
 config_file = 'config.pickle'
 config_script = 'config.py'
 profile_dir = Path('profile')
-iters = 3
-beta_start = 0.01
-# beta_start = 1.00
+iters = 15
+beta_start = 0.0001
 beta_stop = 1.0
 
+#beta_start = 0.1
+#beta_stop = 1.0
+#beta_start = beta_stop
 
 def backup(config, n=1, restore=False):
     if rank == 0:
@@ -150,7 +152,7 @@ Nframes = config['classes'][0]['data'].shape[0]
 if restart and rank == 0:
     # initialise model files
     for ci, c in enumerate(config['classes']):
-        c['model'].init_random()
+        c['model'].init_blob()
 
         with h5py.File(c['model_file'], 'w') as f:
             f['data'] = c['model'].data
@@ -168,6 +170,9 @@ my_classes = cids[rank::size]
 beta = beta_start
 last_change = -100
 iter_stats = None  # stats returned by calculate_P + save_iteration_info
+
+
+#backup(config, 0, True)
 
 for i in range(iters):
     # beta scheduling from previous iteration's in-memory stats.
@@ -214,7 +219,10 @@ for i in range(iters):
     comm.Barrier()
 
     t0 = time()
-    update_models(config_file, config, p_per_device=2, cids=my_classes)
+    if config['classes'][0]['likelihood'] == 'Poisson':
+        update_models(config_file, config, p_per_device=2, cids=my_classes, update_w_first=True)
+    else:
+        update_models(config_file, config, p_per_device=2, cids=my_classes)
     time_I = time() - t0
 
     _assert_model(config, my_classes)
@@ -228,3 +236,5 @@ for i in range(iters):
         print(f'{time_logR=}')
 
     comm.Barrier()
+
+backup(config, 0)

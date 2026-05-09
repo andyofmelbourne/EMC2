@@ -104,8 +104,10 @@ def _calculate_c_n(w_d, P_dr, M_sri, C_i, N, queue, context):
         wP = wP_r[r];
         for (i=0; i<I; i++){
             n = N_sri[s * R * I + r * I + i];
-            C = C_i[i];
-            out[n] += wP * C;
+            if (n >= 0) {
+                C = C_i[i];
+                out[n] += wP * C;
+            }
     }}}
     }
     """

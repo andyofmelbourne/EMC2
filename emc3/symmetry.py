@@ -324,9 +324,9 @@ class Symmetry():
             self.i = i = self.n // (shape[1] * shape[2])
             self.j = j = self.n // shape[2] % shape[1]
             self.k = k = self.n % shape[2]
-            im = (-i + 2 * self.i0) % N
-            jm = (-j + 2 * self.i0) % N
-            km = (-k + 2 * self.i0) % N
+            im = ((-i + 2 * self.i0) % N).astype(int)
+            jm = ((-j + 2 * self.i0) % N).astype(int)
+            km = ((-k + 2 * self.i0) % N).astype(int)
 
             I = self.n.copy()
             inv = im * N**2 + jm * N + km
@@ -341,8 +341,8 @@ class Symmetry():
         elif len(shape) == 2:
             self.i = i = self.n // shape[1]
             self.j = j = self.n  % shape[1]
-            im = (-i + 2 * self.i0) % N
-            jm = (-j + 2 * self.i0) % N
+            im = ((-i + 2 * self.i0) % N).astype(int)
+            jm = ((-j + 2 * self.i0) % N).astype(int)
 
             P4z = jm * N + i
 
