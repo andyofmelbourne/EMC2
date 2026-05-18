@@ -257,8 +257,8 @@ if __name__ == '__main__':
 
     cl_stuff = utils_cl.opencl_init()
 
-    #N = 192
-    N = 512
+    N = 192
+    #N = 512
     i, j, k = np.indices((N, N, N))
 
     # inverse Angstroms
@@ -291,11 +291,11 @@ if __name__ == '__main__':
         'electron_density_fourier': F,
         'dq': dq,
     }
-    with h5py.File(out, 'w') as f:
-        f.create_dataset('electron_density_fourier', data=F, chunks=F.shape, compression='gzip')
-        f['dq'] = dq
+    #with h5py.File(out, 'w') as f:
+    #    f.create_dataset('electron_density_fourier', data=F, chunks=F.shape, compression='gzip')
+    #    f['dq'] = dq
 
-    #pickle.dump(t, open(out, 'wb'))
+    pickle.dump(t, open(out, 'wb'))
 
 
     """

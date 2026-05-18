@@ -281,3 +281,122 @@ class TestScatterAdd:
 
         assert out[0] == pytest.approx(R * I, rel=1e-5)
         assert np.all(out[1:] == 0.0)
+
+
+# ── cluster_classes.triplet_consistency ───────────────────────────────────────
+
+class TestTripletConsistency:
+    """
+    Synthetic octant geometry: 3 class normals along z, x, y axes.
+
+    True sinogram angles (Nrot=360, degrees):
+      pair(0,1): class0=90°, class1=0°
+      pair(0,2): class0=0°,  class2=0°
+      pair(1,2): class1=90°, class2=270°
+
+    All three vertex angles are 90° → valid spherical triangle.
+
+    K=4 symmetry: the C matrix has 4 peaks per pair, spaced 90° apart.
+    The stored best_phi is the *wrong* peak (different shifts per pair),
+    giving vertex angle 0° for classes 0 and 2 (fails in_range check).
+
+    n_peaks=1  must fail  (uses wrong best_phi → inconsistent).
+    n_peaks=4  must pass  (loads all 4 peaks → finds true angles).
+    """
+
+    Nrot  = 360
+    K     = 4
+    step  = Nrot // K          # 90
+
+    # true sinogram peak positions (row=class_a angle, col=class_b angle)
+    _true = {(0, 1): (90, 0), (0, 2): (0, 0), (1, 2): (90, 270)}
+    # different shifts per pair to break n_peaks=1
+    _shifts = {(0, 1): 1, (0, 2): 2, (1, 2): 3}
+
+    @staticmethod
+    def _pair_idx(i, j, N):
+        return i * N - i * (i + 1) // 2 + j - i - 1
+
+    def _build_file(self, tmp_path):
+        import h5py
+        N = 3
+        N_pairs = N * (N - 1) // 2
+        Nrot = self.Nrot
+
+        C = np.zeros((N_pairs, Nrot, Nrot), dtype=np.float32)
+        best_phi = np.zeros((N, N, 2), dtype=np.int32)
+
+        for (i, j), (r_true, c_true) in self._true.items():
+            k = self._pair_idx(i, j, N)
+            for m in range(self.K):
+                r = (r_true + m * self.step) % Nrot
+                c = (c_true + m * self.step) % Nrot
+                C[k, r, c] = 1.0
+            s = self._shifts[(i, j)]
+            r_w = (r_true + s * self.step) % Nrot
+            c_w = (c_true + s * self.step) % Nrot
+            best_phi[i, j] = [r_w, c_w]
+            best_phi[j, i] = [c_w, r_w]
+
+        fnam = tmp_path / 'cl_test.h5'
+        with h5py.File(fnam, 'w') as f:
+            f['class_ids'] = np.array([0, 1, 2], dtype=np.int32)
+            f['N_classes'] = np.int32(N)
+            f['Nrot']      = np.int32(Nrot)
+            f['best_phi']  = best_phi
+            f['scores']    = np.ones((N, N), dtype=np.float32)
+            f.create_dataset('C', data=C,
+                             chunks=(1, Nrot, Nrot), compression='gzip')
+        return fnam
+
+    def test_true_angles_pass_strict_check(self):
+        from emc3.cluster_classes import _sph_triangle_valid_vec
+        phi_scale = 2 * np.pi / self.Nrot
+        r01, c01 = self._true[(0, 1)]
+        r02, c02 = self._true[(0, 2)]
+        r12, c12 = self._true[(1, 2)]
+        ai = ((r01 - r02) % 180) * phi_scale
+        aj = ((c01 - r12) % 180) * phi_scale
+        ak = ((c02 - c12) % 180) * phi_scale
+        A = np.array([ai]); B = np.array([aj]); C = np.array([ak])
+        assert _sph_triangle_valid_vec(A, B, C)[0], \
+            f'True vertex angles ({np.degrees(ai):.1f},{np.degrees(aj):.1f},{np.degrees(ak):.1f}) must pass'
+
+    def test_wrong_angles_fail_strict_check(self):
+        from emc3.cluster_classes import _sph_triangle_valid_vec
+        from itertools import product as iproduct
+        phi_scale = 2 * np.pi / self.Nrot
+        # compute wrong angles from best_phi
+        wrong = {}
+        for (i, j), (r, c) in self._true.items():
+            s = self._shifts[(i, j)]
+            wrong[(i, j)] = ((r + s*self.step) % self.Nrot,
+                             (c + s*self.step) % self.Nrot)
+        r01w, c01w = wrong[(0, 1)]
+        r02w, c02w = wrong[(0, 2)]
+        r12w, c12w = wrong[(1, 2)]
+        ai = ((r01w - r02w) % 180) * phi_scale
+        aj = ((c01w - r12w) % 180) * phi_scale
+        ak = ((c02w - c12w) % 180) * phi_scale
+        signs = np.array(list(iproduct((1,-1), repeat=3)), dtype=float)
+        A = np.where(signs[:,0]>0, ai, np.pi-ai)
+        B = np.where(signs[:,1]>0, aj, np.pi-aj)
+        C = np.where(signs[:,2]>0, ak, np.pi-ak)
+        assert not _sph_triangle_valid_vec(A, B, C).any(), \
+            f'Wrong vertex angles ({np.degrees(ai):.1f},{np.degrees(aj):.1f},{np.degrees(ak):.1f}) must fail all 8 sign combos'
+
+    def test_n_peaks_K_beats_n_peaks_1(self, tmp_path):
+        from emc3.cluster_classes import triplet_consistency
+        fnam = self._build_file(tmp_path)
+        _, cs1, _ = triplet_consistency(fnam, n_peaks=1)
+        _, csK, _ = triplet_consistency(fnam, n_peaks=self.K)
+        # n_peaks=1 uses wrong best_phi: the single triplet must fail
+        assert cs1.mean() == pytest.approx(0.0), \
+            f'n_peaks=1 should score 0 but got {cs1.mean():.3f}'
+        # n_peaks=K finds the true peak: the single triplet must pass.
+        # With N=3 classes the diagonal of pair_scores is 0, so the max
+        # achievable class_score is 2/N = 2/3.
+        N_classes = 3
+        expected = 2.0 / N_classes
+        assert csK.mean() == pytest.approx(expected, abs=1e-6), \
+            f'n_peaks={self.K} should score {expected:.3f} but got {csK.mean():.3f}'

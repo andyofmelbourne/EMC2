@@ -104,7 +104,7 @@ def update_buffer_size(config, config_file, p_per_device=2, cids=None):
 
         # calculate counts per assymetric unit
         sym = symmetry.Symmetry(
-            c['model'].shape[0]//2,
+            c['model'].i0,
             c['model'].shape,
             symmetry=c['model'].symmetry
         )

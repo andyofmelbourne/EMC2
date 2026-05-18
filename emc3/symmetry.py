@@ -333,6 +333,7 @@ class Symmetry():
             P2z = im * N**2 + jm * N + k
             P2x = i * N**2 + jm * N + km
             P2y = im * N**2 + j * N + km
+            mirror_x = im * N**2 + j * N + k
 
             P4z = jm * N**2 + i * N + k
             P4x = i * N**2 + km * N + j
@@ -348,16 +349,21 @@ class Symmetry():
 
             I = self.n.copy()
             inv = im * N + jm
+            mirror_x = im * N + j
             P2z = inv
 
         # only cubes for now
         assert(np.allclose(shape, self.N))
-        assert(symmetry in ['P1', 'C6', 'D6', 'octahedral', 'inversion'])
+        assert(symmetry in ['P1', 'C6', 'D6', 'octahedral', 'inversion', 'mirror'])
         assert(len(shape) in [2, 3])
 
         sym_ops = [I]
         if symmetry == 'inversion':
             sym_ops.append(inv)
+
+        elif symmetry == 'mirror':
+            sym_ops.append(inv)
+            sym_ops.append(mirror_x)
 
         elif symmetry == 'D6':
             if len(shape) == 3:
@@ -527,7 +533,7 @@ def apply_symmetry(ar, symmetry, i0):
 
 def get_non_voxel_operators(dimensions, symmetry):
 
-    if symmetry in ['P1', 'inversion', 'octahedral']:
+    if symmetry in ['P1', 'inversion', 'octahedral', 'mirror']:
         if dimensions == 2 :
             return np.array([[[1, 0], [0, 1]]])
         elif dimensions == 3:

@@ -14,6 +14,9 @@ import tqdm
 from orix.quaternion import symmetry
 from orix.sampling import get_sample_fundamental
 
+def round_up_to_odd(f):
+    return int(np.ceil(f) // 2 * 2 + 1)
+
 def get_rotation_matrices(
     queue=None,
     context=None,
@@ -47,9 +50,10 @@ def get_rotation_matrices(
         import re
 
         # hack
+        # this doesn't really work
         if symmetry_str == 'P1':
             pg_string = 'C1'
-        elif symmetry_str == 'inversion':
+        elif symmetry_str in ['inversion', 'mirror']:
             pg_string = 'Ci'
 
         match = re.search(r'\d+', pg_string)
@@ -61,6 +65,7 @@ def get_rotation_matrices(
         # resolution in degrees converted to radians
         res_rad = np.radians(resolution)
         n_points = int(np.ceil(fz_limit / res_rad))
+        n_points = round_up_to_odd(n_points)
         angles = np.linspace(0, fz_limit, n_points, endpoint=False)
 
         # Vectorised creation of 2x2 rotation matrices

@@ -14,6 +14,15 @@ def get_option(d, thing):
     else:
         return False
 
+def write_h5(f, name, data):
+    if name in f:
+        if f[name].shape == data.shape:
+            f[name][:] = data
+            return
+        else:
+            del f[name]
+    f[name] = data
+
 
 def load_config(path):
     logger.debug(f'\nloading configuration file from {path}')
@@ -88,8 +97,37 @@ def write_h5(f, k, v, compression=True, chunks=None):
                 chunks = v.shape
             f.create_dataset(k, data=v, chunks=chunks, compression=compression)
 
+def _save_mapper_geometry(config, grp):
+    """Write per-class mapper geometry into an HDF5 group for the orientation widget."""
+    mgrp = grp.require_group('mapper')
+    for c_idx, c_cfg in enumerate(config['classes']):
+        c_grp  = mgrp.require_group(f'class_{c_idx}')
+        mapper = c_cfg['mapper']
+        S, J, K, L = mapper.M_sjkl.shape[:4]
+        dims   = mapper.dimensions
+        c_grp.attrs['dimensions'] = dims
+        c_grp.attrs['J']          = int(J)
+        c_grp.attrs['K']          = int(K)
+        c_grp.attrs['L']          = int(L)
+        c_grp.attrs['r_offset']   = int(c_cfg.get('r_offset', 0))
+        if dims == 3:
+            c_grp.attrs['symmetry'] = c_cfg['model'].symmetry
+            z_unnorm = mapper.M_sjkl[:, 0, 0, :, :3, 2].reshape(S * L, 3)
+            norms    = np.linalg.norm(z_unnorm, axis=-1, keepdims=True)
+            z_unit   = (z_unnorm / np.where(norms == 0, 1.0, norms)).astype(np.float32)
+            write_h5(c_grp, 'z_unit', z_unit)
+        elif dims == 2:
+            M2    = mapper.M_sjkl[0, 0, 0, :, :2, :2]
+            norms = np.hypot(M2[:, 0, 0], M2[:, 1, 0])
+            norms = np.where(norms == 0, 1.0, norms)
+            angles_deg = np.degrees(
+                np.arctan2(M2[:, 1, 0] / norms, M2[:, 0, 0] / norms)
+            ).astype(np.float32)
+            write_h5(c_grp, 'angles_deg', angles_deg)
+
+
 @profiling.timed
-def save_iteration_info(stats, working_directory):
+def save_iteration_info(stats, working_directory, config=None):
     """
     Write per-iteration statistics to iteration_info.h5.
 
@@ -156,6 +194,9 @@ def save_iteration_info(stats, working_directory):
         write_h5(grp, 'occupancy_dc',             occupancy_dc)
         write_h5(grp, 'most_likely_orientation_d', local_rmax_d)
         write_h5(grp, 'sparse_file',              sparse_file)
+
+        if config is not None:
+            _save_mapper_geometry(config, grp)
 
         f['iterations'][...] = N + 1
         f['beta'][N]         = beta

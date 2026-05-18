@@ -39,6 +39,9 @@ def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_si
     wsums_r = tomos_cl.calculate_wsums(chunksize=r_chunk_size, r0=r0, r1=r1)
     wsums_r = wsums_r[r0:r1]
 
+    dsums_r = tomos_cl.calculate_wsums(chunksize=r_chunk_size, r0=r0, r1=r1, D_n=True)
+    dsums_r = dsums_r[r0:r1]
+
     # free memory (not sure if this works)
     del tomos_cl
 
@@ -65,7 +68,11 @@ def calculate_logR_class_0(K_di, frames, cl, r0, r1, d_chunk_size=64, r_chunk_si
             logR = np.sum(K_chunk[:, None, :] * F_dri, axis=-1)
             logR -= w_d[d0:d1, None] * wsums_r[None, r00:r11] + frames.B_di.data_sum[d0:d1, None]
 
+            # test
+            logR -= np.log(dsums_r)[None, r00:r11]
+
             logR_dr[d0:d1, r00:r11] += logR
+
 
             t += time.time() - t0
 

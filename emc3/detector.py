@@ -65,10 +65,25 @@ class Detector():
         self.shape = mask.shape
 
 
-def Detector_cxi(cxi_file=None, mask=None, scale_correction=True, detector_distance=False):
+def Detector_cxi(
+    cxi_file=None,
+    mask=None,
+    scale_correction=True,
+    detector_distance=False,
+    xyz_map=None
+    ):
     import h5py
     with h5py.File(cxi_file) as f:
-        xyz = f['entry_1/instrument_1/detector_1/xyz_map'][()]
+        # optionally over-ride geometry
+        k = 'entry_1/instrument_1/detector_1/xyz_map'
+        shape = f[k].shape
+        if xyz_map is not None and xyz_map.shape == shape:
+            xyz = xyz_map
+        elif not xyz_map:
+            xyz = f[k][()]
+        else:
+            raise ValueError(f'xyz_map has the wrong shape! {xyz_map.shape=} {shape=}')
+
         k1 = 'entry_1/instrument_1/detector_1/pixel_area'
         k2 = 'entry_1/instrument_1/detector_1/x_pixel_size'
         k3 = 'entry_1/instrument_1/detector_1/y_pixel_size'

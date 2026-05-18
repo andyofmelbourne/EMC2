@@ -162,8 +162,13 @@ class Tomograms_cl():
         self.context = context
         self.tomo = tomo
 
-    def load_buffers(self, r_chunk_size=1, buffer_size=None):
-        self.I_im = to_gpu_image(self.tomo.model.data, self.queue, self.context)
+    def load_buffers(self, r_chunk_size=1, buffer_size=None, D_n=False):
+        if D_n:
+            data = self.tomo.model.D_n
+        else:
+            data = self.tomo.model.data
+
+        self.I_im = to_gpu_image(data, self.queue, self.context)
 
         if buffer_size is not None:
             self.W_ri = np.empty((buffer_size), dtype=np.float32)
@@ -269,7 +274,7 @@ class Tomograms_cl():
 
         return out
 
-    def calculate_wsums(self, chunksize=1024, r0=0, r1=None):
+    def calculate_wsums(self, chunksize=1024, r0=0, r1=None, D_n=False):
         if r1 is None:
             r1 = self.shape[0]
 
@@ -277,7 +282,7 @@ class Tomograms_cl():
 
         chunksize = min(chunksize, R)
 
-        self.load_buffers(chunksize)
+        self.load_buffers(chunksize, D_n=D_n)
 
         wsums_r = np.empty(self.shape[0], dtype=np.float32)
 

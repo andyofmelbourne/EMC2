@@ -90,8 +90,8 @@ refresh_config = False
 config_file = 'config.pickle'
 config_script = 'config.py'
 profile_dir = Path('profile')
-iters = 15
-beta_start = 0.0001
+iters = 20
+beta_start = 0.01
 beta_stop = 1.0
 
 #beta_start = 0.1
@@ -152,7 +152,10 @@ Nframes = config['classes'][0]['data'].shape[0]
 if restart and rank == 0:
     # initialise model files
     for ci, c in enumerate(config['classes']):
-        c['model'].init_blob()
+        if c['model'].ndim == 3:
+            c['model'].init_blob()
+        else:
+            c['model'].init_random()
 
         with h5py.File(c['model_file'], 'w') as f:
             f['data'] = c['model'].data
@@ -187,16 +190,14 @@ for i in range(iters):
         print(f'{rank=} {change=} {last_change=} {i=}')
         sys.stdout.flush()
 
-        """
         if change < 0.05 and last_change != (i - 1) and beta != beta_stop:
             beta *= 2
             last_change = i
 
         if beta == beta_stop and change < 0.05 and last_change != (i - 1):
             break
-        """
 
-    beta *= 2
+    #beta *= 2
     beta = min(beta, beta_stop)
 
     t0 = time()
@@ -212,7 +213,7 @@ for i in range(iters):
         time_prob = time() - t0
         _assert_probability(config)
         iter_stats = emc3.input_output.save_iteration_info(
-            stats, config['working_directory']
+            stats, config['working_directory'], config=config
         )
         emc3.input_output.print_iteration_stats(iter_stats)
 

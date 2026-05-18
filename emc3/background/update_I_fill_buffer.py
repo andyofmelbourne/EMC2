@@ -122,9 +122,9 @@ import pyopencl as cl
 
 class Fill_buffers():
 
-    def __init__(self, counts_m, m_min, m_max, model_shape, model_symmetry, queue, context):
+    def __init__(self, counts_m, m_min, m_max, model_shape, model_symmetry, model_i0, queue, context):
         sym = symmetry.Symmetry(
-            model_shape[0]//2,
+            model_i0,
             model_shape,
             symmetry=model_symmetry
         )
@@ -421,7 +421,7 @@ if __name__ == "__main__":
     rmax = 32
 
     fill_buffers = Fill_buffers(
-            counts_m, m_min, m_max, c['model'].shape, c['model'].symmetry,
+            counts_m, m_min, m_max, c['model'].shape, c['model'].symmetry, c['model'].i0,
             cl_cpu['queue'],
             cl_cpu['context']
     )
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     shape = c['model'].shape
     model_symmetry = c['model'].symmetry
     sym = symmetry.Symmetry(
-        shape[0]//2,
+        c['model'].i0,
         shape,
         symmetry=model_symmetry
     )

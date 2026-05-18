@@ -31,6 +31,8 @@ def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
     t0 = time.time()
     L.wsums_r = tomos_cl.calculate_wsums(chunksize=r_chunk_size)
 
+    dsums_r = tomos_cl.calculate_wsums(chunksize=r_chunk_size, D_n=True)
+
     tomos_cl.load_buffers(r_chunk_size=r_chunk_size)
 
     logR_dr = np.zeros((D, R), dtype=np.float32)
@@ -58,6 +60,9 @@ def calculate_logR_class_0(L, cl, d_chunk_size=1024, r_chunk_size=1024):
 
     # offset
     L.offset(logR_dr)
+
+    # test
+    logR_dr -= np.log(dsums_r)[None, :]
 
     return logR_dr, L.wsums_r, t
 
@@ -158,6 +163,11 @@ if __name__ == '__main__':
         with profiling.cl_timed('io:load_data'):
             with h5py.File(c['model_file']) as f:
                 c['model'].data = f['data'][()]
+                if 'D_n' in f:
+                    c['model'].D_n = f['D_n'][()]
+                else:
+                    c['model'].D_n = np.ones_like(c['model'].data)
+
             c['fluence'] = w_d
             c['P_data'].load_from_file()
 
